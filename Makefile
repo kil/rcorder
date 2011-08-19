@@ -10,12 +10,14 @@ DPADD=	${LIBUTIL}
 
 WARNS?=	6
 # XXX hack for make's hash.[ch]
-CFLAGS+= -DORDER -I.
+CFLAGS+= -DORDER -I. -DDEBUG=1
 
 SRCS+=	util.h
 CLEANFILES+=	util.h
 
 util.h:
-	ln -sf ${.CURDIR}/../../lib/libutil/libutil.h ${.TARGET}
+	test -f ${.CURDIR}/../../lib/libutil/libutil.h ${.TARGET} && \
+	ln -sf ${.CURDIR}/../../lib/libutil/libutil.h ${.TARGET} || \
+	ln -sf /usr/include/libutil.h ${.TARGET}
 
 .include <bsd.prog.mk>
