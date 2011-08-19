@@ -1,0 +1,5 @@
+util.h
+*.o
+*.gz
+rcorder
+*.log
