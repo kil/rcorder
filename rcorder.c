@@ -3,6 +3,7 @@
 #endif
 
 /*
+ * Copyright (c) 2011 Kilian Klimek
  * Copyright (c) 1998, 1999 Matthew R. Green
  * All rights reserved.
  * Copyright (c) 1998
@@ -46,6 +47,11 @@ __FBSDID("$FreeBSD: stable/8/sbin/rcorder/rcorder.c 173412 2007-11-07 10:53:41Z 
 #include <string.h>
 #include <unistd.h>
 #include <util.h>
+#include <sys/types.h>
+#include <sys/event.h>
+#include <sys/time.h>
+#include <sys/wait.h>
+#include <errno.h>
 
 #include "ealloc.h"
 #include "sprite.h"
@@ -76,6 +82,11 @@ int debug = 0;
 int exit_code;
 int file_count;
 char **file_list;
+int kq;
+char d_script_arg[] = "faststart";
+char d_trampoline[] = "/etc/rc.trampoline";
+char *trampoline = d_trampoline;
+char *script_arg = d_script_arg;
 
 typedef int bool;
 #define TRUE 1
@@ -83,6 +94,7 @@ typedef int bool;
 typedef bool flag;
 #define SET TRUE
 #define RESET FALSE
+#define RUNNING 2
 
 Hash_Table provide_hash_s, *provide_hash;
 
@@ -151,6 +163,9 @@ void crunch_all_files(void);
 void initialize(void);
 void generate_ordering(void);
 int main(int, char *[]);
+static pid_t spawn(filenode *);
+static int wait_child(void);
+static void run_scripts(void);
 
 int
 main(argc, argv)
@@ -158,12 +173,19 @@ main(argc, argv)
 	char *argv[];
 {
 	int ch;
+	int run = 0;
+	struct stat st;
 
-	while ((ch = getopt(argc, argv, "dk:s:")) != -1)
+	while ((ch = getopt(argc, argv, "a:dk:rs:T:")) != -1)
 		switch (ch) {
+		case 'a':
+			script_arg = optarg;
+			break;
 		case 'd':
 #ifdef DEBUG
 			debug = 1;
+			/* inherited by the trampoline script */
+			setenv("_RCORDER_RUN_DEBUG", "yes", 1);
 #else
 			warnx("debugging not compiled in, -d ignored");
 #endif
@@ -171,8 +193,14 @@ main(argc, argv)
 		case 'k':
 			strnode_add(&keep_list, optarg, 0);
 			break;
+		case 'r':
+			run = 1;
+			break;
 		case 's':
 			strnode_add(&skip_list, optarg, 0);
+			break;
+		case 'T':
+			trampoline = optarg;
 			break;
 		default:
 			/* XXX should crunch it? */
@@ -189,8 +217,34 @@ main(argc, argv)
 	DPRINTF((stderr, "initialize\n"));
 	crunch_all_files();
 	DPRINTF((stderr, "crunch_all_files\n"));
-	generate_ordering();
-	DPRINTF((stderr, "generate_ordering\n"));
+	if(run) {
+		/* do some sanity checking on the trampoline script */
+		if(stat(trampoline, &st) == -1) {
+			perror("stat");
+			exit(1);
+		}
+
+		if(!S_ISREG(st.st_mode)) {
+			printf("not a regular file: %s\n", trampoline);
+			exit(1);
+		}
+
+		if((st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
+			printf("not executable: %s\n", trampoline);
+			exit(1);
+		}
+
+		if((kq = kqueue()) == -1) {
+			perror("kqueue");
+			exit(1);
+		}
+
+		run_scripts();
+		DPRINTF((stderr, "run_scripts\n"));
+	} else {
+		generate_ordering();
+		DPRINTF((stderr, "generate_ordering\n"));
+	}
 
 	exit(exit_code);
 }
@@ -833,4 +887,222 @@ generate_ordering()
 		DPRINTF((stderr, "generate on %s\n", fn_head->next->filename));
 		do_file(fn_head->next);
 	}
+}
+
+
+/*
+ * Loop over filenode list multiple times and and, for each iteration, start
+ * rc scripts which have all requirements satisfied. Continue until all
+ * filenodes are SET (were run and exited).
+ */
+static void
+run_scripts(void)
+{
+	provnode	*p;
+	Hash_Entry	*entry;
+	f_reqnode	*r;
+	filenode	*fn_this;
+	int		n_set = 0,
+			n_unset = 0,
+			n_running = 0,
+			n_total = 0,
+			n_spawn = 0,
+			all_set;
+
+	while(1) {
+		n_total = 0;
+		/* skip list head */
+		fn_this = fn_head->next;
+		n_set = n_unset = n_running = 0, n_spawn = 0;
+
+		while (fn_this != NULL) {
+			n_total++;
+
+			switch(fn_this->in_progress) {
+			case SET:
+				n_set++;
+				break;
+			case RESET:
+				n_unset++;
+				break;
+			case RUNNING:
+				n_running++;
+				break;
+			}
+
+			if(fn_this->in_progress != RESET) {
+				fn_this = fn_this->next;
+				continue;
+			}
+
+			if(fn_this->req_list == NULL) {
+				if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+					fn_this->in_progress = SET;
+					n_set++;
+				} else {
+					if(spawn(fn_this))
+						n_spawn++;
+				}
+				fn_this = fn_this->next;
+				continue;
+			}
+
+			/* skip head */
+			r = fn_this->req_list->next;
+			all_set = 1;
+
+			/* check if all requirements are satisfied */
+			while(all_set && r != NULL) {
+				entry = r->entry;
+				p = Hash_GetValue(entry);
+
+				if(p)
+					p = p->next;
+
+				while(p) {
+					if(p->fnode->in_progress != SET) {
+						all_set = 0;
+						break;
+					}
+
+					p = p->next;
+				}
+
+				r = r->next;
+			}
+
+			if(all_set) {
+				if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+					fn_this->in_progress = SET;
+					n_set++;
+				} else {
+					if(spawn(fn_this))
+						n_spawn++;
+				}
+			}
+
+			fn_this = fn_this->next;
+		}
+
+		DPRINTF((stderr, "S:%d, U:%d, R:%d, SP:%d, T:%d\n", \
+					n_set, n_unset, n_running, n_spawn, \
+					n_total));
+
+		if(n_running > 0) {
+			wait_child();
+			continue;
+		}
+
+		/* maybe should check n_set == n_total here. */
+		if((n_set + n_running) == n_total) {
+			break;
+		} else {
+			if(n_spawn == 0) {
+				printf("we appear to be stuck. oh dear ...\n");
+				exit(1);
+			}
+		}
+	}
+
+	exit(0);
+}
+
+
+/*
+ * start a rc script for a filenode.
+ */
+static pid_t
+spawn(filenode *fn)
+{
+	struct kevent	event;
+	pid_t		p;
+	char		*args[] = {trampoline, fn->filename, script_arg, NULL};
+
+	DPRINTF((stderr, "spawn: %s\n", fn->filename));
+	p = fork();
+
+	if(p == -1) {
+		if(errno == EAGAIN)
+			return 0;
+		perror("fork");
+		exit(1);
+	}
+
+	/* parent */
+	if(p > 0) {
+		EV_SET(&event, p, EVFILT_PROC,
+				EV_ADD | EV_ENABLE | EV_ONESHOT,
+				NOTE_EXIT, 0, fn);
+
+		if(kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+			if(errno == EINTR)
+				return 0;
+			perror("kevent");
+			exit(1);
+		}
+
+		fn->in_progress = RUNNING;
+		return p;
+	}
+
+	/* child */
+	execv(args[0], args);
+	exit(1);
+}
+
+/*
+ * Wait for at least one child process to exit. We block for a maximum
+ * of 20 seconds. After that, collect what is available.
+ */
+static int
+wait_child(void)
+{
+	struct kevent	event;
+	filenode	*f;
+	int		ret = 0,
+			n = 0;
+	struct timespec	ts;
+
+	ts.tv_sec = 20;
+	ts.tv_nsec = 0;
+
+	while(1) {
+		ret = kevent(kq, NULL, 0, &event, 1, &ts);
+
+		if(ret == 0)
+			break;
+
+		ts.tv_sec = 0;
+
+		if(ret == -1) {
+			if(errno == EINTR)
+				break;
+			perror("kevent");
+			exit(1);
+		}
+
+		/*
+		 * ignore waitpid errors and exit status; nothing we can do.
+		 * just collect childs.
+		 */
+		waitpid(event.ident, NULL, WNOHANG);
+
+		f = (filenode *) event.udata;
+
+		if(event.fflags & NOTE_EXIT) {
+			DPRINTF((stderr, "exit: %s (%d)\n", f->filename, event.ident));
+			f->in_progress = SET;
+
+			if (f->next != NULL) {
+				f->next->last = f->last;
+			}
+
+			if (f->last != NULL) {
+				f->last->next = f->next;
+			}
+		}
+		n++;
+	}
+
+	return 0;
 }

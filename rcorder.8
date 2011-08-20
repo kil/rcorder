@@ -39,8 +39,11 @@
 .Nd print a dependency ordering of interdependent files
 .Sh SYNOPSIS
 .Nm
+.Op Fl a
 .Op Fl k Ar keep
+.Op Fl r
 .Op Fl s Ar skip
+.Op Fl T Ar trampoline_script
 .Ar
 .Sh DESCRIPTION
 The
@@ -92,18 +95,30 @@ is reached, parsing stops.
 .Pp
 The options are as follows:
 .Bl -tag -width indent
+.It Fl a
+Argument passed to rc scripts by the trampoline script.
 .It Fl k
 Add the specified keyword to the
 .Dq "keep list" .
 If any
 .Fl k
 option is given, only those files containing the matching keyword are listed.
+.It Fl r
+Instead of printing the ordered list of rc scripts, execute them concurrently
+as
+.Nm
+sees fit.
 .It Fl s
 Add the specified keyword to the
 .Dq "skip list" .
 If any
 .Fl s
 option is given, files containing the matching keyword are not listed.
+.It Fl t Ar trampoline_script
+When running with the
+.Fl r
+flag, use the specified argument as the
+.Ar trampoline_script.
 .El
 .Pp
 An example block follows:

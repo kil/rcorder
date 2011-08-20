@@ -1,0 +1,11 @@
+#!/bin/sh
+. /etc/rc.subr
+load_rc_config 'XXX'
+
+if test -n "$_RCORDER_RUN_DEBUG"; then
+	echo '_RCORDER_RUN_DEBUG' $1 $2
+	sleep 0.02
+	exit 0
+fi
+
+run_rc_script $1 $2
