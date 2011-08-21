@@ -1,0 +1,18 @@
+--- rc.orig	2011-08-21 23:08:45.000000000 +0200
++++ rc	2011-08-21 23:37:22.000000000 +0200
+@@ -100,10 +92,15 @@
+ case ${local_startup} in
+ [Nn][Oo] | '') ;;
+ *)	find_local_scripts_new ;;
+ esac
+ 
++rcorder -r -a ${_boot} ${skip} `rcorder ${skip} /etc/rc.d/* ${local_rc} | sed -n "/$early_late_divider\$/,\\$p" | xargs` \
++	&& echo '' \
++	&& date \
++	&& exit 0
++
+ files=`rcorder ${skip} /etc/rc.d/* ${local_rc} 2>/dev/null`
+ _skip_early=1
+ for _rc_elem in ${files}; do
+ 	case "$_skip_early" in
+ 	1)	case "$_rc_elem" in

@@ -17,24 +17,13 @@ Install
 4. cp rc.trampoline /etc/rc.trampoline
 5. chmod 555 /etc/rc.trampoline
 6. Install rcorder to /sbin
-7. Patch /etc/rc:
+7. Patch /etc/rc
 
---- /etc/rc.orig	2011-08-20 15:48:47.797082170 +0200
-+++ /etc/rc	2011-08-20 15:49:32.438011394 +0200
-@@ -100,10 +100,15 @@
- case ${local_startup} in
- [Nn][Oo] | '') ;;
- *)	find_local_scripts_new ;;
- esac
- 
-+/sbin/rcorder -r -a ${_boot} ${skip} /etc/rc.d/* ${local_rc} \
-+	&& echo '' \
-+	&& date \
-+	&& exit 0
-+
- files=`rcorder ${skip} /etc/rc.d/* ${local_rc} 2>/dev/null`
- _skip_early=1
- for _rc_elem in ${files}; do
- 	case "$_skip_early" in
- 	1)	case "$_rc_elem" in
+The rc.diff patch will use concurrent mode only for scripts after the
+$early_late_divider and fall back to the traditional method in case of
+errors.
+
+Additionally, you can apply rc_early_late.diff which will use the concurrent
+mode for the scripts before the $early_late_divider, too (this method might
+be a bit faster):
 

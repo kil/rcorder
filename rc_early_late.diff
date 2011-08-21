@@ -1,0 +1,24 @@
+--- rc.orig	2011-08-21 22:25:43.920318434 +0200
++++ rc	2011-08-21 22:25:50.160451537 +0200
+@@ -82,17 +82,18 @@
+ # Do a first pass to get everything up to $early_late_divider so that
+ # we can do a second pass that includes $local_startup directories
+ #
+ files=`rcorder ${skip} /etc/rc.d/* 2>/dev/null`
+ 
+-for _rc_elem in ${files}; do
+-	run_rc_script ${_rc_elem} ${_boot}
++run_files=$(for _rc_elem in ${files}; do
++	echo ${_rc_elem}
+ 
+ 	case "$_rc_elem" in
+ 	*/${early_late_divider})	break ;;
+ 	esac
+-done
++done)
++rcorder -r -a ${_boot} ${skip} ${run_files}
+ 
+ unset files local_rc
+ 
+ # Now that disks are mounted, for each dir in $local_startup
+ # search for init scripts that use the new rc.d semantics.
