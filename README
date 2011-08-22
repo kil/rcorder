@@ -27,3 +27,22 @@ Additionally, you can apply rc_early_late.diff which will use the concurrent
 mode for the scripts before the $early_late_divider, too (this method might
 be a bit faster):
 
+Time spend in /etc/rc
+=====================
+The values below are "time before exit" minus "time of start" (the utility
+used to get the time is included as upsecs.c):
+
+x concurrent_rcorder
++ traditional
++------------------------------------------------------------+
+| x   x                                          +       ++  |
+||MA_|                                           |_____A_M__||
++------------------------------------------------------------+
+    N           Min           Max        Median           Avg        Stddev
+x   3     12.407667     12.719797      12.42672     12.518061    0.17496775
++   3     16.151403     16.935099     16.817023     16.634508     0.4225264
+Difference at 95.0% confidence
+	4.11645 +/- 0.732959
+	32.8841% +/- 5.85521%
+	(Student's t, pooled s = 0.323375)
+
