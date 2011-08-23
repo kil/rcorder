@@ -32,6 +32,8 @@ Time spend in /etc/rc
 The values below are "time before exit" minus "time of start" (the utility
 used to get the time is included as upsecs.c):
 
+My computer:
+
 x concurrent_rcorder
 + traditional
 +------------------------------------------------------------+
@@ -45,4 +47,57 @@ Difference at 95.0% confidence
 	4.11645 +/- 0.732959
 	32.8841% +/- 5.85521%
 	(Student's t, pooled s = 0.323375)
+
+
+1 core VirtualBox, default 8.2 install
+dhcp, sshd:
+
+x traditional
++ concurrent
++------------------------------------------------------------+
+|x   x  x                                          +    ++  +|
+| |__A__|                                           |___AM__||
++------------------------------------------------------------+
+    N           Min           Max        Median           Avg        Stddev
+x   4      2.257153      2.301959      2.280774     2.2799435   0.018301019
++   4       2.56839      2.625687      2.605807     2.6001423   0.023756568
+Difference at 95.0% confidence
+	0.320199 +/- 0.0366908
+	14.0442% +/- 1.60928%
+	(Student's t, pooled s = 0.021205)
+
+
+1 core VirtualBox, default 8.2 install
+dhcp, sshd, moused, ftpd, inetd, ntpd:
+x traditional
++ concurrent
++------------------------------------------------------------+
+|+              +   +    x                          x x      |
+| |_________A___M_____|     |_______________A_______M_______||
++------------------------------------------------------------+
+    N           Min           Max        Median           Avg        Stddev
+x   3      2.593638      2.717906      2.709764     2.6737693   0.069515077
++   3      2.489138      2.569741      2.553724     2.5375343   0.042670715
+Difference at 95.0% confidence
+	-0.136235 +/- 0.130729
+	-5.09524% +/- 4.88932%
+	(Student's t, pooled s = 0.0576764)
+
+
+2 core VirtualBox, default 8.2 install
+dhcp, sshd, moused, ftpd, inetd, ntpd:
+
+x traditional
++ concurrent
++------------------------------------------------------------+
+|  + +            +                            x  x         x|
+||___M___A_______|                           |____M_A______| |
++------------------------------------------------------------+
+    N           Min           Max        Median           Avg        Stddev
+x   3      3.168023       3.49342      3.232705     3.2980493    0.17225915
++   3      2.067178      2.442309      2.115453     2.2083133    0.20407866
+Difference at 95.0% confidence
+	-1.08974 +/- 0.428024
+	-33.0418% +/- 12.9781%
+	(Student's t, pooled s = 0.18884)
 
