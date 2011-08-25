@@ -52,6 +52,7 @@ __FBSDID("$FreeBSD: stable/8/sbin/rcorder/rcorder.c 173412 2007-11-07 10:53:41Z 
 #include <sys/time.h>
 #include <sys/wait.h>
 #include <errno.h>
+#include <libgen.h>
 
 #include "ealloc.h"
 #include "sprite.h"
@@ -87,6 +88,8 @@ char d_script_arg[] = "faststart";
 char d_trampoline[] = "/etc/rc.trampoline";
 char *trampoline = d_trampoline;
 char *script_arg = d_script_arg;
+char *rc_first = NULL;
+char *rc_last = NULL;
 
 typedef int bool;
 #define TRUE 1
@@ -95,6 +98,8 @@ typedef bool flag;
 #define SET TRUE
 #define RESET FALSE
 #define RUNNING 2
+#define FIRST 3
+#define LAST 4
 
 Hash_Table provide_hash_s, *provide_hash;
 
@@ -167,6 +172,7 @@ static pid_t spawn(filenode *);
 static int wait_child(void);
 static void run_scripts(void);
 
+
 int
 main(argc, argv)
 	int argc;
@@ -176,7 +182,7 @@ main(argc, argv)
 	int run = 0;
 	struct stat st;
 
-	while ((ch = getopt(argc, argv, "a:dk:rs:T:")) != -1)
+	while ((ch = getopt(argc, argv, "a:df:k:l:rs:T:")) != -1)
 		switch (ch) {
 		case 'a':
 			script_arg = optarg;
@@ -201,6 +207,12 @@ main(argc, argv)
 			break;
 		case 'T':
 			trampoline = optarg;
+			break;
+		case 'f':
+			rc_first = optarg;
+			break;
+		case 'l':
+			rc_last = optarg;
 			break;
 		default:
 			/* XXX should crunch it? */
@@ -300,7 +312,15 @@ filenode_new(filename)
 	temp->req_list = NULL;
 	temp->prov_list = NULL;
 	temp->keyword_list = NULL;
-	temp->in_progress = RESET;
+
+	if(rc_first && !strncmp(rc_first, basename(filename), strlen(rc_first))) {
+		temp->in_progress = FIRST;
+	} else if(rc_last && !strncmp(rc_last, basename(filename), strlen(rc_last))) {
+		temp->in_progress = LAST;
+	} else {
+		temp->in_progress = RESET;
+	}
+
 	/*
 	 * link the filenode into the list of filenodes.
 	 * note that the double linking means we can delete a
@@ -803,9 +823,6 @@ do_file(fnode)
 	} else
 		was_set = 0;
 
-	/* mark fnode */
-	fnode->in_progress = SET;
-
 	/*
 	 * for each requirement of fnode -> r
 	 *	satisfy_req(r, filename)
@@ -821,6 +838,12 @@ do_file(fnode)
 #endif
 	}
 	fnode->req_list = NULL;
+
+	/* mark fnode */
+	if(fnode->in_progress == FIRST)
+		rc_first = NULL;
+	else if(fnode->in_progress != LAST)
+		fnode->in_progress = SET;
 
 	/*
 	 * for each provision of fnode -> p
@@ -846,8 +869,12 @@ do_file(fnode)
 	DPRINTF((stderr, "next do: "));
 
 	/* if we were already in progress, don't print again */
-	if (was_set == 0 && skip_ok(fnode) && keep_ok(fnode))
-		printf("%s\n", fnode->filename);
+	if (was_set == 0 && skip_ok(fnode) && keep_ok(fnode)) {
+		if(!rc_first)
+			printf("%s\n", fnode->filename);
+		if(fnode->in_progress == LAST)
+			exit(0);
+	}
 	
 	if (fnode->next != NULL) {
 		fnode->next->last = fnode->last;
@@ -930,18 +957,33 @@ run_scripts(void)
 				break;
 			}
 
-			if(fn_this->in_progress != RESET) {
+			if(fn_this->in_progress == SET || fn_this->in_progress == RUNNING) {
 				fn_this = fn_this->next;
 				continue;
 			}
 
 			if(fn_this->req_list == NULL) {
-				if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+				if(fn_this->in_progress == FIRST) {
+					fn_this->in_progress = RESET;
+					rc_first = NULL;
+				}
+
+				if(rc_last && fn_this->in_progress == LAST) {
+					fn_this = fn_this->next;
+					continue;
+				}
+
+				if(rc_first) {
 					fn_this->in_progress = SET;
-					n_set++;
+					n_spawn++;
 				} else {
-					if(spawn(fn_this))
-						n_spawn++;
+					if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+						fn_this->in_progress = SET;
+						n_set++;
+					} else {
+						if(spawn(fn_this))
+							n_spawn++;
+					}
 				}
 				fn_this = fn_this->next;
 				continue;
@@ -971,12 +1013,27 @@ run_scripts(void)
 			}
 
 			if(all_set) {
-				if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+				if(fn_this->in_progress == FIRST) {
+					fn_this->in_progress = RESET;
+					rc_first = NULL;
+				}
+
+				if(rc_last && fn_this->in_progress == LAST) {
+					fn_this = fn_this->next;
+					continue;
+				}
+
+				if(rc_first) {
 					fn_this->in_progress = SET;
-					n_set++;
+					n_spawn++;
 				} else {
-					if(spawn(fn_this))
-						n_spawn++;
+					if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+						fn_this->in_progress = SET;
+						n_set++;
+					} else {
+						if(spawn(fn_this))
+							n_spawn++;
+					}
 				}
 			}
 
@@ -996,6 +1053,9 @@ run_scripts(void)
 		if((n_set + n_running) == n_total) {
 			break;
 		} else {
+			if(n_spawn == 0 && n_running == 0 && rc_last != NULL) {
+				exit(0);
+			}
 			if(n_spawn == 0) {
 				printf("we appear to be stuck. oh dear ...\n");
 				exit(1);

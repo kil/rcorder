@@ -44,6 +44,8 @@
 .Op Fl r
 .Op Fl s Ar skip
 .Op Fl T Ar trampoline_script
+.Op Fl f Ar first
+.Op Fl l Ar last
 .Ar
 .Sh DESCRIPTION
 The
@@ -119,6 +121,14 @@ When running with the
 .Fl r
 flag, use the specified argument as the
 .Ar trampoline_script.
+.It Fl f Ar first
+Act as if the requirement
+.Ar first
+has already been satisfied.
+.It Fl l Ar last
+Stop when the requirement
+.Ar last
+has been satisfied.
 .El
 .Pp
 An example block follows:

@@ -1,18 +1,42 @@
---- rc.orig	2011-08-21 23:08:45.000000000 +0200
-+++ rc	2011-08-21 23:37:22.000000000 +0200
-@@ -100,10 +92,15 @@
- case ${local_startup} in
- [Nn][Oo] | '') ;;
+diff --git a/rc.orig b/rc
+index 5e90ed7..9b954c8 100644
+--- a/rc.orig
++++ b/rc
+@@ -82,19 +82,8 @@ fi
+ # Do a first pass to get everything up to $early_late_divider so that
+ # we can do a second pass that includes $local_startup directories
+ #
+-files=`rcorder ${skip} /etc/rc.d/* 2>/dev/null`
+-
+-_rc_elem_done=' '
+-for _rc_elem in ${files}; do
+-	run_rc_script ${_rc_elem} ${_boot}
+-	_rc_elem_done="${_rc_elem_done}${_rc_elem} "
+-
+-	case "$_rc_elem" in
+-	*/${early_late_divider})	break ;;
+-	esac
+-done
+-
+-unset files local_rc
++rcorder -r ${skip} -a ${_boot} -l ${early_late_divider} /etc/rc.d/*
++unset local_rc
+ 
+ # Now that disks are mounted, for each dir in $local_startup
+ # search for init scripts that use the new rc.d semantics.
+@@ -104,14 +93,7 @@ case ${local_startup} in
  *)	find_local_scripts_new ;;
  esac
  
-+rcorder -r -a ${_boot} ${skip} `rcorder ${skip} /etc/rc.d/* ${local_rc} | sed -n "/$early_late_divider\$/,\\$p" | xargs` \
-+	&& echo '' \
-+	&& date \
-+	&& exit 0
-+
- files=`rcorder ${skip} /etc/rc.d/* ${local_rc} 2>/dev/null`
- _skip_early=1
- for _rc_elem in ${files}; do
- 	case "$_skip_early" in
- 	1)	case "$_rc_elem" in
+-files=`rcorder ${skip} /etc/rc.d/* ${local_rc} 2>/dev/null`
+-for _rc_elem in ${files}; do
+-	case "$_rc_elem_done" in
+-	*" $_rc_elem "*)	continue ;;
+-	esac
+-
+-	run_rc_script ${_rc_elem} ${_boot}
+-done
++rcorder -r ${skip} -a ${_boot} -f ${early_late_divider} /etc/rc.d/* ${local_rc}
+ 
+ echo ''
+ date
