@@ -947,8 +947,7 @@ run_scripts(void)
 				continue;
 			}
 
-			/* skip head */
-			r = fn_this->req_list->next;
+			r = fn_this->req_list;
 			all_set = 1;
 
 			/* check if all requirements are satisfied */
