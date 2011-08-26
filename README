@@ -19,13 +19,6 @@ Install
 6. Install rcorder to /sbin
 7. Patch /etc/rc
 
-The rc.diff patch will use concurrent mode only for scripts after the
-$early_late_divider and fall back to the traditional method in case of
-errors.
-
-Additionally, you can apply rc_early_late.diff which will use the concurrent
-mode for the scripts before the $early_late_divider, too (this method might
-be a bit faster):
 
 Time spend in /etc/rc
 =====================
