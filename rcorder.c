@@ -171,6 +171,7 @@ int main(int, char *[]);
 static pid_t spawn(filenode *);
 static int wait_child(void);
 static void run_scripts(void);
+static void filenode_unlink(filenode *);
 
 
 int
@@ -976,10 +977,12 @@ run_scripts(void)
 				if(rc_first) {
 					fn_this->in_progress = SET;
 					n_spawn++;
+					filenode_unlink(fn_this);
 				} else {
 					if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
 						fn_this->in_progress = SET;
 						n_set++;
+					filenode_unlink(fn_this);
 					} else {
 						if(spawn(fn_this))
 							n_spawn++;
@@ -1026,10 +1029,12 @@ run_scripts(void)
 				if(rc_first) {
 					fn_this->in_progress = SET;
 					n_spawn++;
+					filenode_unlink(fn_this);
 				} else {
 					if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
 						fn_this->in_progress = SET;
 						n_set++;
+						filenode_unlink(fn_this);
 					} else {
 						if(spawn(fn_this))
 							n_spawn++;
@@ -1151,17 +1156,25 @@ wait_child(void)
 		if(event.fflags & NOTE_EXIT) {
 			DPRINTF((stderr, "exit: %s (%d)\n", f->filename, event.ident));
 			f->in_progress = SET;
-
-			if (f->next != NULL) {
-				f->next->last = f->last;
-			}
-
-			if (f->last != NULL) {
-				f->last->next = f->next;
-			}
+			filenode_unlink(f);
 		}
 		n++;
 	}
 
 	return 0;
+}
+
+/*
+ * remove filenode from list.
+ */
+static void
+filenode_unlink(filenode *f)
+{
+	if (f->next != NULL) {
+		f->next->last = f->last;
+	}
+
+	if (f->last != NULL) {
+		f->last->next = f->next;
+	}
 }
