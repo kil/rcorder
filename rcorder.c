@@ -230,24 +230,24 @@ main(argc, argv)
 	DPRINTF((stderr, "initialize\n"));
 	crunch_all_files();
 	DPRINTF((stderr, "crunch_all_files\n"));
-	if(run) {
+	if (run) {
 		/* do some sanity checking on the trampoline script */
-		if(stat(trampoline, &st) == -1) {
+		if (stat(trampoline, &st) == -1) {
 			perror("stat");
 			exit(1);
 		}
 
-		if(!S_ISREG(st.st_mode)) {
+		if (!S_ISREG(st.st_mode)) {
 			printf("not a regular file: %s\n", trampoline);
 			exit(1);
 		}
 
-		if((st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
+		if ((st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
 			printf("not executable: %s\n", trampoline);
 			exit(1);
 		}
 
-		if((kq = kqueue()) == -1) {
+		if ((kq = kqueue()) == -1) {
 			perror("kqueue");
 			exit(1);
 		}
@@ -314,9 +314,9 @@ filenode_new(filename)
 	temp->prov_list = NULL;
 	temp->keyword_list = NULL;
 
-	if(rc_first && !strncmp(rc_first, basename(filename), strlen(rc_first))) {
+	if (rc_first != NULL && strncmp(rc_first, basename(filename), strlen(rc_first)) == 0) {
 		temp->in_progress = FIRST;
-	} else if(rc_last && !strncmp(rc_last, basename(filename), strlen(rc_last))) {
+	} else if (rc_last != NULL && strncmp(rc_last, basename(filename), strlen(rc_last)) == 0) {
 		temp->in_progress = LAST;
 	} else {
 		temp->in_progress = RESET;
@@ -841,9 +841,9 @@ do_file(fnode)
 	fnode->req_list = NULL;
 
 	/* mark fnode */
-	if(fnode->in_progress == FIRST)
+	if (fnode->in_progress == FIRST)
 		rc_first = NULL;
-	else if(fnode->in_progress != LAST)
+	else if (fnode->in_progress != LAST)
 		fnode->in_progress = SET;
 
 	/*
@@ -871,9 +871,9 @@ do_file(fnode)
 
 	/* if we were already in progress, don't print again */
 	if (was_set == 0 && skip_ok(fnode) && keep_ok(fnode)) {
-		if(!rc_first)
+		if (rc_first == NULL)
 			printf("%s\n", fnode->filename);
-		if(fnode->in_progress == LAST)
+		if (fnode->in_progress == LAST)
 			exit(0);
 	}
 	
@@ -930,14 +930,14 @@ run_scripts(void)
 	Hash_Entry	*entry;
 	f_reqnode	*r;
 	filenode	*fn_this;
-	int		n_set = 0,
-			n_unset = 0,
-			n_running = 0,
-			n_total = 0,
-			n_spawn = 0,
+	int		n_set,
+			n_unset,
+			n_running,
+			n_total,
+			n_spawn,
 			all_set;
 
-	while(1) {
+	while (1) {
 		n_total = 0;
 		/* skip list head */
 		fn_this = fn_head->next;
@@ -946,7 +946,7 @@ run_scripts(void)
 		while (fn_this != NULL) {
 			n_total++;
 
-			switch(fn_this->in_progress) {
+			switch (fn_this->in_progress) {
 			case SET:
 				n_set++;
 				break;
@@ -958,33 +958,33 @@ run_scripts(void)
 				break;
 			}
 
-			if(fn_this->in_progress == SET || fn_this->in_progress == RUNNING) {
+			if (fn_this->in_progress == SET || fn_this->in_progress == RUNNING) {
 				fn_this = fn_this->next;
 				continue;
 			}
 
-			if(fn_this->req_list == NULL) {
-				if(fn_this->in_progress == FIRST) {
+			if (fn_this->req_list == NULL) {
+				if (fn_this->in_progress == FIRST) {
 					fn_this->in_progress = RESET;
 					rc_first = NULL;
 				}
 
-				if(rc_last && fn_this->in_progress == LAST) {
+				if (rc_last != NULL && fn_this->in_progress == LAST) {
 					fn_this = fn_this->next;
 					continue;
 				}
 
-				if(rc_first) {
+				if (rc_first != NULL) {
 					fn_this->in_progress = SET;
 					n_spawn++;
 					filenode_unlink(fn_this);
 				} else {
-					if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
 						fn_this->in_progress = SET;
 						n_set++;
 					filenode_unlink(fn_this);
 					} else {
-						if(spawn(fn_this))
+						if (spawn(fn_this))
 							n_spawn++;
 					}
 				}
@@ -996,15 +996,15 @@ run_scripts(void)
 			all_set = 1;
 
 			/* check if all requirements are satisfied */
-			while(all_set && r != NULL) {
+			while (all_set && r != NULL) {
 				entry = r->entry;
 				p = Hash_GetValue(entry);
 
-				if(p)
+				if (p != NULL)
 					p = p->next;
 
-				while(p) {
-					if(p->fnode->in_progress != SET) {
+				while (p != NULL) {
+					if (p->fnode->in_progress != SET) {
 						all_set = 0;
 						break;
 					}
@@ -1015,28 +1015,28 @@ run_scripts(void)
 				r = r->next;
 			}
 
-			if(all_set) {
-				if(fn_this->in_progress == FIRST) {
+			if (all_set) {
+				if (fn_this->in_progress == FIRST) {
 					fn_this->in_progress = RESET;
 					rc_first = NULL;
 				}
 
-				if(rc_last && fn_this->in_progress == LAST) {
+				if (rc_last != NULL && fn_this->in_progress == LAST) {
 					fn_this = fn_this->next;
 					continue;
 				}
 
-				if(rc_first) {
+				if (rc_first != NULL) {
 					fn_this->in_progress = SET;
 					n_spawn++;
 					filenode_unlink(fn_this);
 				} else {
-					if(!(skip_ok(fn_this) && keep_ok(fn_this))) {
+					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
 						fn_this->in_progress = SET;
 						n_set++;
 						filenode_unlink(fn_this);
 					} else {
-						if(spawn(fn_this))
+						if (spawn(fn_this))
 							n_spawn++;
 					}
 				}
@@ -1049,19 +1049,18 @@ run_scripts(void)
 					n_set, n_unset, n_running, n_spawn, \
 					n_total));
 
-		if(n_running > 0) {
+		if (n_running > 0) {
 			wait_child();
 			continue;
 		}
 
 		/* maybe should check n_set == n_total here. */
-		if((n_set + n_running) == n_total) {
+		if ((n_set + n_running) == n_total) {
 			break;
 		} else {
-			if(n_spawn == 0 && n_running == 0 && rc_last != NULL) {
+			if (n_spawn == 0 && n_running == 0 && rc_last != NULL)
 				exit(0);
-			}
-			if(n_spawn == 0) {
+			if (n_spawn == 0) {
 				printf("we appear to be stuck. oh dear ...\n");
 				exit(1);
 			}
@@ -1085,28 +1084,28 @@ spawn(filenode *fn)
 	DPRINTF((stderr, "spawn: %s\n", fn->filename));
 	p = fork();
 
-	if(p == -1) {
-		if(errno == EAGAIN)
-			return 0;
+	if (p == -1) {
+		if (errno == EAGAIN)
+			return (0);
 		perror("fork");
 		exit(1);
 	}
 
 	/* parent */
-	if(p > 0) {
+	if (p > 0) {
 		EV_SET(&event, p, EVFILT_PROC,
 				EV_ADD | EV_ENABLE | EV_ONESHOT,
 				NOTE_EXIT, 0, fn);
 
-		if(kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
-			if(errno == EINTR)
-				return 0;
+		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
+			if (errno == EINTR)
+				return (0);
 			perror("kevent");
 			exit(1);
 		}
 
 		fn->in_progress = RUNNING;
-		return p;
+		return (p);
 	}
 
 	/* child */
@@ -1130,16 +1129,16 @@ wait_child(void)
 	ts.tv_sec = 20;
 	ts.tv_nsec = 0;
 
-	while(1) {
+	while (1) {
 		ret = kevent(kq, NULL, 0, &event, 1, &ts);
 
-		if(ret == 0)
+		if (ret == 0)
 			break;
 
 		ts.tv_sec = 0;
 
-		if(ret == -1) {
-			if(errno == EINTR)
+		if (ret == -1) {
+			if (errno == EINTR)
 				break;
 			perror("kevent");
 			exit(1);
@@ -1153,7 +1152,7 @@ wait_child(void)
 
 		f = (filenode *) event.udata;
 
-		if(event.fflags & NOTE_EXIT) {
+		if (event.fflags & NOTE_EXIT) {
 			DPRINTF((stderr, "exit: %s (%d)\n", f->filename, event.ident));
 			f->in_progress = SET;
 			filenode_unlink(f);
@@ -1161,7 +1160,7 @@ wait_child(void)
 		n++;
 	}
 
-	return 0;
+	return (0);
 }
 
 /*
@@ -1170,11 +1169,9 @@ wait_child(void)
 static void
 filenode_unlink(filenode *f)
 {
-	if (f->next != NULL) {
-		f->next->last = f->last;
-	}
 
-	if (f->last != NULL) {
+	if (f->next != NULL)
+		f->next->last = f->last;
+	if (f->last != NULL)
 		f->last->next = f->next;
-	}
 }
