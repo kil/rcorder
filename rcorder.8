@@ -101,8 +101,10 @@ The options are as follows:
 Argument passed to rc scripts by the trampoline script.
 .It Fl f Ar first
 Act as if the requirement
-.Ar first
-has already been satisfied.
+.Ar first,
+and requirements leading up to it, have already been satisfied (see
+.Sx CAVEATS
+sections).
 .It Fl k
 Add the specified keyword to the
 .Dq "keep list" .
@@ -112,7 +114,9 @@ option is given, only those files containing the matching keyword are listed.
 .It Fl l Ar last
 Stop when the requirement
 .Ar last
-has been satisfied.
+has been satisfied (see
+.Sx CAVEATS
+sections).
 .It Fl r
 Instead of printing the ordered list of rc scripts, execute them concurrently
 as
@@ -196,6 +200,48 @@ script in the dependency ordering,
 not necessarily that it requires
 .Xr named 8
 to be started or enabled.
+.Sh CAVEATS
+When running with the
+.Fl r
+flag, the arguments passed to
+.Fl f
+or
+.Fl l
+must be one of the check-points (or "placeholders") mentioned in
+.Xr rc 8 .
+.Pp
+The ordering generated when running with or without the
+.Fl r
+flag is different. Without the
+.Fl r
+flag, and with the
+.Fl l
+flag,
+.Nm
+produces an ordering that only guarantees that the check-point will
+be satisfied. With the
+.Fl r
+flag,
+.Nm
+will guarantee that all and only the requirements leading up to the
+check-point will be satisfied.
+.Pp
+Likewise, with the
+.Fl f
+flag and the
+.Fl r
+flag set,
+.Nm
+will assume all and only the requirements before the check-point are
+satisfied. Without the
+.Fl r
+flag, the ordering will complement the ordering generated of the same
+.Nm
+run with the
+.Fl f
+replaced with
+.Fl l
+flag.
 .Sh SEE ALSO
 .Xr rc 8
 .Sh HISTORY
