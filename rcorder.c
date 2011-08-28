@@ -1017,8 +1017,7 @@ run_scripts(void)
 			continue;
 		}
 
-		/* maybe should check n_set == n_total here. */
-		if ((n_set + n_running) == n_total) {
+		if (n_set == n_total) {
 			break;
 		} else {
 			if (n_spawn == 0 && n_running == 0 && rc_last != NULL)
