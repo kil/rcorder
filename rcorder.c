@@ -175,9 +175,7 @@ static void filenode_unlink(filenode *);
 
 
 int
-main(argc, argv)
-	int argc;
-	char *argv[];
+main(int argc, char *argv[])
 {
 	int ch;
 	int run = 0;
@@ -266,7 +264,7 @@ main(argc, argv)
  * initialise various variables.
  */
 void
-initialize()
+initialize(void)
 {
 
 	fn_head = &fn_head_s;
@@ -277,10 +275,7 @@ initialize()
 
 /* generic function to insert a new strnodelist element */
 void
-strnode_add(listp, s, fnode)
-	strnodelist **listp;
-	char *s;
-	filenode *fnode;
+strnode_add(strnodelist **listp, char *s, filenode *fnode)
 {
 	strnodelist *ent;
 
@@ -302,8 +297,7 @@ strnode_add(listp, s, fnode)
  * fill in the bits, and put it in the filenode linked list
  */
 filenode *
-filenode_new(filename)
-	char *filename;
+filenode_new(char *filename)
 {
 	filenode *temp;
 
@@ -339,9 +333,7 @@ filenode_new(filename)
  * add a requirement to a filenode.
  */
 void
-add_require(fnode, s)
-	filenode *fnode;
-	char *s;
+add_require(filenode *fnode, char *s)
 {
 	Hash_Entry *entry;
 	f_reqnode *rnode;
@@ -361,9 +353,7 @@ add_require(fnode, s)
  * have a head node, create one here.
  */
 void
-add_provide(fnode, s)
-	filenode *fnode;
-	char *s;
+add_provide(filenode *fnode, char *s)
 {
 	Hash_Entry *entry;
 	f_provnode *f_pnode;
@@ -442,9 +432,7 @@ add_provide(fnode, s)
  * put the BEFORE: lines to a list and handle them later.
  */
 void
-add_before(fnode, s)
-	filenode *fnode;
-	char *s;
+add_before(filenode *fnode, char *s)
 {
 	strnodelist *bf_ent;
 
@@ -459,9 +447,7 @@ add_before(fnode, s)
  * add a key to a filenode.
  */
 void
-add_keyword(fnode, s)
-	filenode *fnode;
-	char *s;
+add_keyword(filenode *fnode, char *s)
 {
 
 	strnode_add(&fnode->keyword_list, s, fnode);
@@ -472,9 +458,7 @@ add_keyword(fnode, s)
  * add_require() to do the real work.
  */
 void
-parse_require(node, buffer)
-	filenode *node;
-	char *buffer;
+parse_require(filenode *node, char *buffer)
 {
 	char *s;
 	
@@ -488,9 +472,7 @@ parse_require(node, buffer)
  * add_provide() to do the real work.
  */
 void
-parse_provide(node, buffer)
-	filenode *node;
-	char *buffer;
+parse_provide(filenode *node, char *buffer)
 {
 	char *s;
 	
@@ -504,9 +486,7 @@ parse_provide(node, buffer)
  * add_before() to do the real work.
  */
 void
-parse_before(node, buffer)
-	filenode *node;
-	char *buffer;
+parse_before(filenode *node, char *buffer)
 {
 	char *s;
 	
@@ -520,9 +500,7 @@ parse_before(node, buffer)
  * add_keyword() to do the real work.
  */
 void
-parse_keywords(node, buffer)
-	filenode *node;
-	char *buffer;
+parse_keywords(filenode *node, char *buffer)
 {
 	char *s;
 	
@@ -536,8 +514,7 @@ parse_keywords(node, buffer)
  * for provision and requirement lines, building the graphs as needed.
  */
 void
-crunch_file(filename)
-	char *filename;
+crunch_file(char *filename)
 {
 	FILE *fp;
 	char *buf;
@@ -609,8 +586,7 @@ crunch_file(filename)
 }
 
 Hash_Entry *
-make_fake_provision(node)
-	filenode *node;
+make_fake_provision(filenode *node)
 {
 	Hash_Entry *entry;
 	f_provnode *f_pnode;
@@ -656,7 +632,7 @@ make_fake_provision(node)
  * that provisions filenode for P.
  */
 void
-insert_before()
+insert_before(void)
 {
 	Hash_Entry *entry, *fake_prov_entry;
 	provnode *pnode;
@@ -694,7 +670,7 @@ insert_before()
  * lines into graph(s).
  */
 void
-crunch_all_files()
+crunch_all_files(void)
 {
 	int i;
 	
@@ -719,9 +695,7 @@ crunch_all_files()
  * provision.
  */
 void
-satisfy_req(rnode, filename)
-	f_reqnode *rnode;
-	char *filename;
+satisfy_req(f_reqnode *rnode, char *filename)
 {
 	Hash_Entry *entry;
 	provnode *head;
@@ -762,8 +736,7 @@ satisfy_req(rnode, filename)
 }
 
 int
-skip_ok(fnode)
-	filenode *fnode;
+skip_ok(filenode *fnode)
 {
 	strnodelist *s;
 	strnodelist *k;
@@ -777,8 +750,7 @@ skip_ok(fnode)
 }
 
 int
-keep_ok(fnode)
-	filenode *fnode;
+keep_ok(filenode *fnode)
 {
 	strnodelist *s;
 	strnodelist *k;
@@ -803,8 +775,7 @@ keep_ok(fnode)
  * Circular dependancies will cause problems if we do.
  */
 void
-do_file(fnode)
-	filenode *fnode;
+do_file(filenode *fnode)
 {
 	f_reqnode *r, *r_tmp;
 	f_provnode *p, *p_tmp;
@@ -894,7 +865,7 @@ do_file(fnode)
 }
 
 void
-generate_ordering()
+generate_ordering(void)
 {
 
 	/*
