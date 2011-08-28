@@ -1082,8 +1082,7 @@ wait_child(void)
 {
 	struct kevent	event;
 	filenode	*f;
-	int		ret = 0,
-			n = 0;
+	int		ret = 0;
 	struct timespec	ts;
 	f_provnode	*p,
 			*p_tmp;
@@ -1138,7 +1137,6 @@ wait_child(void)
 			}
 			f->prov_list = NULL;
 		}
-		n++;
 	}
 
 	return (0);
