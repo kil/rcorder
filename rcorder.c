@@ -230,25 +230,17 @@ main(int argc, char *argv[])
 	DPRINTF((stderr, "crunch_all_files\n"));
 	if (run) {
 		/* do some sanity checking on the trampoline script */
-		if (stat(trampoline, &st) == -1) {
-			perror("stat");
-			exit(1);
-		}
+		if (stat(trampoline, &st) == -1)
+			err(1, "failed to stat %s", trampoline);
 
-		if (!S_ISREG(st.st_mode)) {
-			printf("not a regular file: %s\n", trampoline);
-			exit(1);
-		}
+		if (!S_ISREG(st.st_mode))
+			errx(1, "not a regular file: %s", trampoline);
 
-		if ((st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0) {
-			printf("not executable: %s\n", trampoline);
-			exit(1);
-		}
+		if ((st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0)
+			errx(1, "not executable: %s", trampoline);
 
-		if ((kq = kqueue()) == -1) {
-			perror("kqueue");
-			exit(1);
-		}
+		if ((kq = kqueue()) == -1)
+			err(1, "kqueue failed");
 
 		run_scripts();
 		DPRINTF((stderr, "run_scripts\n"));
@@ -1058,8 +1050,7 @@ spawn(filenode *fn)
 	if (p == -1) {
 		if (errno == EAGAIN)
 			return (0);
-		perror("fork");
-		exit(1);
+		err(1, "fork");
 	}
 
 	/* parent */
@@ -1071,8 +1062,7 @@ spawn(filenode *fn)
 		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
 			if (errno == EINTR)
 				return (0);
-			perror("kevent");
-			exit(1);
+			err(1, "kevent");
 		}
 
 		fn->in_progress = RUNNING;
@@ -1111,8 +1101,7 @@ wait_child(void)
 		if (ret == -1) {
 			if (errno == EINTR)
 				break;
-			perror("kevent");
-			exit(1);
+			err(1, "kevent");
 		}
 
 		/*
