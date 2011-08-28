@@ -1085,6 +1085,9 @@ wait_child(void)
 	int		ret = 0,
 			n = 0;
 	struct timespec	ts;
+	f_provnode	*p,
+			*p_tmp;
+	provnode	*pnode;
 
 	ts.tv_sec = 20;
 	ts.tv_nsec = 0;
@@ -1115,6 +1118,25 @@ wait_child(void)
 			DPRINTF((stderr, "exit: %s (%d)\n", f->filename, event.ident));
 			f->in_progress = SET;
 			filenode_unlink(f);
+			f->req_list = NULL;
+
+			/*
+			 * for each provision of fnode -> p
+			 *	remove fnode from provision list for p in hash table
+			 */
+			p = f->prov_list;
+			while (p != NULL) {
+				p_tmp = p;
+				pnode = p->pnode;
+				if (pnode->next != NULL)
+					pnode->next->last = pnode->last;
+				if (pnode->last != NULL)
+					pnode->last->next = pnode->next;
+				free(pnode);
+				p = p->next;
+				free(p_tmp);
+			}
+			f->prov_list = NULL;
 		}
 		n++;
 	}
