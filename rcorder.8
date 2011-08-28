@@ -39,7 +39,7 @@
 .Nd print a dependency ordering of interdependent files
 .Sh SYNOPSIS
 .Nm
-.Op Fl a
+.Op Fl a Ar action
 .Op Fl f Ar first
 .Op Fl k Ar keep
 .Op Fl l Ar last
@@ -97,7 +97,7 @@ is reached, parsing stops.
 .Pp
 The options are as follows:
 .Bl -tag -width indent
-.It Fl a
+.It Fl a Ar action
 Argument passed to rc scripts by the trampoline script.
 .It Fl f Ar first
 Act as if the requirement
