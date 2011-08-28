@@ -1,0 +1,707 @@
+Index: etc/rc
+===================================================================
+--- etc/rc	(revision 225227)
++++ etc/rc	(working copy)
+@@ -82,17 +82,21 @@
+ # Do a first pass to get everything up to $early_late_divider so that
+ # we can do a second pass that includes $local_startup directories
+ #
+-files=`rcorder ${skip} /etc/rc.d/* 2>/dev/null`
++if checkyesno rc_concurrent; then
++	rcorder -r ${skip} -a ${_boot} -l ${early_late_divider} /etc/rc.d/*
++else
++	files=`rcorder ${skip} /etc/rc.d/* 2>/dev/null`
+ 
+-_rc_elem_done=' '
+-for _rc_elem in ${files}; do
+-	run_rc_script ${_rc_elem} ${_boot}
+-	_rc_elem_done="${_rc_elem_done}${_rc_elem} "
++	_rc_elem_done=' '
++	for _rc_elem in ${files}; do
++		run_rc_script ${_rc_elem} ${_boot}
++		_rc_elem_done="${_rc_elem_done}${_rc_elem} "
+ 
+-	case "$_rc_elem" in
+-	*/${early_late_divider})	break ;;
+-	esac
+-done
++		case "$_rc_elem" in
++		*/${early_late_divider})	break ;;
++		esac
++	done
++fi
+ 
+ unset files local_rc
+ 
+@@ -104,15 +108,20 @@
+ *)	find_local_scripts_new ;;
+ esac
+ 
+-files=`rcorder ${skip} /etc/rc.d/* ${local_rc} 2>/dev/null`
+-for _rc_elem in ${files}; do
+-	case "$_rc_elem_done" in
+-	*" $_rc_elem "*)	continue ;;
+-	esac
++if checkyesno rc_concurrent; then
++	rcorder -r ${skip} -a ${_boot} -f ${early_late_divider} /etc/rc.d/* \
++		${local_rc}
++	echo "rc_concurrent finished"
++else
++	files=`rcorder ${skip} /etc/rc.d/* ${local_rc} 2>/dev/null`
++	for _rc_elem in ${files}; do
++		case "$_rc_elem_done" in
++		*" $_rc_elem "*)	continue ;;
++		esac
+ 
+-	run_rc_script ${_rc_elem} ${_boot}
+-done
+-
++		run_rc_script ${_rc_elem} ${_boot}
++	done
++fi
+ echo ''
+ date
+ exit 0
+Index: etc/rc.d/abi
+===================================================================
+--- etc/rc.d/abi	(revision 225227)
++++ etc/rc.d/abi	(working copy)
+@@ -6,6 +6,7 @@
+ # PROVIDE: abi
+ # REQUIRE: archdep
+ # KEYWORD: nojail
++# BEFORE: cleartmp
+ 
+ . /etc/rc.subr
+ 
+Index: etc/rc.d/jail
+===================================================================
+--- etc/rc.d/jail	(revision 225227)
++++ etc/rc.d/jail	(working copy)
+@@ -4,7 +4,7 @@
+ #
+ 
+ # PROVIDE: jail
+-# REQUIRE: LOGIN cleanvar
++# REQUIRE: LOGIN cleanvar cleartmp
+ # BEFORE: securelevel
+ # KEYWORD: nojail shutdown
+ 
+Index: etc/rc.d/motd
+===================================================================
+--- etc/rc.d/motd	(revision 225227)
++++ etc/rc.d/motd	(working copy)
+@@ -5,7 +5,7 @@
+ 
+ # PROVIDE: motd
+ # REQUIRE: mountcritremote
+-# BEFORE:  LOGIN
++# BEFORE:  LOGIN cleartmp
+ 
+ . /etc/rc.subr
+ 
+Index: etc/defaults/rc.conf
+===================================================================
+--- etc/defaults/rc.conf	(revision 225227)
++++ etc/defaults/rc.conf	(working copy)
+@@ -25,6 +25,7 @@
+ rc_info="NO"		# Enables display of informational messages at boot.
+ rc_startmsgs="YES" 	# Show "Starting foo:" messages at boot
+ rcshutdown_timeout="30" # Seconds to wait before terminating rc.shutdown
++rc_concurrent="NO"	# start rc scripts concurrently.
+ early_late_divider="FILESYSTEMS"	# Script that separates early/late
+ 			# stages of the boot process.  Make sure you know
+ 			# the ramifications if you change this.
+Index: etc/rc.trampoline
+===================================================================
+--- etc/rc.trampoline	(revision 0)
++++ etc/rc.trampoline	(revision 0)
+@@ -0,0 +1,11 @@
++#!/bin/sh
++. /etc/rc.subr
++load_rc_config 'XXX'
++
++if test -n "$_RCORDER_RUN_DEBUG"; then
++	echo '_RCORDER_RUN_DEBUG' $1 $2
++	sleep 0.02
++	exit 0
++fi
++
++run_rc_script $1 $2
+
+Property changes on: etc/rc.trampoline
+___________________________________________________________________
+Added: svn:executable
+   + *
+
+Index: sbin/rcorder/rcorder.c
+===================================================================
+--- sbin/rcorder/rcorder.c	(revision 225227)
++++ sbin/rcorder/rcorder.c	(working copy)
+@@ -3,6 +3,7 @@
+ #endif
+ 
+ /*
++ * Copyright (c) 2011 Kilian Klimek
+  * Copyright (c) 1998, 1999 Matthew R. Green
+  * All rights reserved.
+  * Copyright (c) 1998
+@@ -46,6 +47,12 @@
+ #include <string.h>
+ #include <unistd.h>
+ #include <util.h>
++#include <sys/types.h>
++#include <sys/event.h>
++#include <sys/time.h>
++#include <sys/wait.h>
++#include <errno.h>
++#include <libgen.h>
+ 
+ #include "ealloc.h"
+ #include "sprite.h"
+@@ -76,6 +83,13 @@
+ int exit_code;
+ int file_count;
+ char **file_list;
++int kq;
++char d_script_arg[] = "faststart";
++char d_trampoline[] = "/etc/rc.trampoline";
++char *trampoline = d_trampoline;
++char *script_arg = d_script_arg;
++char *rc_first = NULL;
++char *rc_last = NULL;
+ 
+ typedef int bool;
+ #define TRUE 1
+@@ -83,6 +97,9 @@
+ typedef bool flag;
+ #define SET TRUE
+ #define RESET FALSE
++#define RUNNING 2
++#define FIRST 3
++#define LAST 4
+ 
+ Hash_Table provide_hash_s, *provide_hash;
+ 
+@@ -151,17 +168,28 @@
+ void initialize(void);
+ void generate_ordering(void);
+ int main(int, char *[]);
++static pid_t spawn(filenode *);
++static int wait_child(void);
++static void run_scripts(void);
++static void filenode_unlink(filenode *);
+ 
+ int
+ main(int argc, char *argv[])
+ {
+ 	int ch;
++	int run = 0;
++	struct stat st;
+ 
+-	while ((ch = getopt(argc, argv, "dk:s:")) != -1)
++	while ((ch = getopt(argc, argv, "a:df:k:l:rs:T:")) != -1)
+ 		switch (ch) {
++		case 'a':
++			script_arg = optarg;
++			break;
+ 		case 'd':
+ #ifdef DEBUG
+ 			debug = 1;
++			/* inherited by the trampoline script */
++			setenv("_RCORDER_RUN_DEBUG", "yes", 1);
+ #else
+ 			warnx("debugging not compiled in, -d ignored");
+ #endif
+@@ -169,9 +197,21 @@
+ 		case 'k':
+ 			strnode_add(&keep_list, optarg, 0);
+ 			break;
++		case 'r':
++			run = 1;
++			break;
+ 		case 's':
+ 			strnode_add(&skip_list, optarg, 0);
+ 			break;
++		case 'T':
++			trampoline = optarg;
++			break;
++		case 'f':
++			rc_first = optarg;
++			break;
++		case 'l':
++			rc_last = optarg;
++			break;
+ 		default:
+ 			/* XXX should crunch it? */
+ 			break;
+@@ -187,9 +227,27 @@
+ 	DPRINTF((stderr, "initialize\n"));
+ 	crunch_all_files();
+ 	DPRINTF((stderr, "crunch_all_files\n"));
+-	generate_ordering();
+-	DPRINTF((stderr, "generate_ordering\n"));
++	if (run) {
++		/* do some sanity checking on the trampoline script */
++		if (stat(trampoline, &st) == -1)
++			err(1, "failed to stat %s", trampoline);
+ 
++		if (!S_ISREG(st.st_mode))
++			errx(1, "not a regular file: %s", trampoline);
++
++		if ((st.st_mode & (S_IXUSR | S_IXGRP | S_IXOTH)) == 0)
++			errx(1, "not executable: %s", trampoline);
++
++		if ((kq = kqueue()) == -1)
++			err(1, "kqueue failed");
++
++		run_scripts();
++		DPRINTF((stderr, "run_scripts\n"));
++	} else {
++		generate_ordering();
++		DPRINTF((stderr, "generate_ordering\n"));
++	}
++
+ 	exit(exit_code);
+ }
+ 
+@@ -240,7 +298,15 @@
+ 	temp->req_list = NULL;
+ 	temp->prov_list = NULL;
+ 	temp->keyword_list = NULL;
+-	temp->in_progress = RESET;
++
++	if (rc_first != NULL && strncmp(rc_first, basename(filename), strlen(rc_first)) == 0) {
++		temp->in_progress = FIRST;
++	} else if (rc_last != NULL && strncmp(rc_last, basename(filename), strlen(rc_last)) == 0) {
++		temp->in_progress = LAST;
++	} else {
++		temp->in_progress = RESET;
++	}
++
+ 	/*
+ 	 * link the filenode into the list of filenodes.
+ 	 * note that the double linking means we can delete a
+@@ -720,9 +786,6 @@
+ 	} else
+ 		was_set = 0;
+ 
+-	/* mark fnode */
+-	fnode->in_progress = SET;
+-
+ 	/*
+ 	 * for each requirement of fnode -> r
+ 	 *	satisfy_req(r, filename)
+@@ -739,6 +802,10 @@
+ 	}
+ 	fnode->req_list = NULL;
+ 
++	/* mark fnode */
++	if (fnode->in_progress != FIRST && fnode->in_progress != LAST)
++		fnode->in_progress = SET;
++
+ 	/*
+ 	 * for each provision of fnode -> p
+ 	 *	remove fnode from provision list for p in hash table
+@@ -763,8 +830,14 @@
+ 	DPRINTF((stderr, "next do: "));
+ 
+ 	/* if we were already in progress, don't print again */
+-	if (was_set == 0 && skip_ok(fnode) && keep_ok(fnode))
+-		printf("%s\n", fnode->filename);
++	if (was_set == 0 && skip_ok(fnode) && keep_ok(fnode)) {
++		if (rc_first == NULL)
++			printf("%s\n", fnode->filename);
++		if (fnode->in_progress == FIRST)
++			rc_first = NULL;
++		else if (fnode->in_progress == LAST)
++			exit(0);
++	}
+ 	
+ 	if (fnode->next != NULL) {
+ 		fnode->next->last = fnode->last;
+@@ -805,3 +878,276 @@
+ 		do_file(fn_head->next);
+ 	}
+ }
++
++/*
++ * Loop over filenode list multiple times and and, for each iteration, start
++ * rc scripts which have all requirements satisfied. Continue until all
++ * filenodes are SET (were run and exited).
++ */
++static void
++run_scripts(void)
++{
++	provnode	*p;
++	Hash_Entry	*entry;
++	f_reqnode	*r;
++	filenode	*fn_this;
++	int		n_set,
++			n_unset,
++			n_running,
++			n_total,
++			n_spawn,
++			all_set;
++
++	while (1) {
++		n_total = 0;
++		/* skip list head */
++		fn_this = fn_head->next;
++		n_set = n_unset = n_running = 0, n_spawn = 0;
++
++		while (fn_this != NULL) {
++			n_total++;
++
++			switch (fn_this->in_progress) {
++			case SET:
++				n_set++;
++				break;
++			case RESET:
++				n_unset++;
++				break;
++			case RUNNING:
++				n_running++;
++				break;
++			}
++
++			if (fn_this->in_progress == SET || fn_this->in_progress == RUNNING) {
++				fn_this = fn_this->next;
++				continue;
++			}
++
++			if (fn_this->req_list == NULL) {
++				if (fn_this->in_progress == FIRST) {
++					fn_this->in_progress = RESET;
++					rc_first = NULL;
++				}
++
++				if (rc_last != NULL && fn_this->in_progress == LAST) {
++					fn_this = fn_this->next;
++					continue;
++				}
++
++				if (rc_first != NULL) {
++					fn_this->in_progress = SET;
++					n_spawn++;
++					filenode_unlink(fn_this);
++				} else {
++					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
++						fn_this->in_progress = SET;
++						n_set++;
++					filenode_unlink(fn_this);
++					} else {
++						if (spawn(fn_this))
++							n_spawn++;
++					}
++				}
++				fn_this = fn_this->next;
++				continue;
++			}
++
++			r = fn_this->req_list;
++			all_set = 1;
++
++			/* check if all requirements are satisfied */
++			while (all_set && r != NULL) {
++				entry = r->entry;
++				p = Hash_GetValue(entry);
++
++				if (p != NULL)
++					p = p->next;
++
++				while (p != NULL) {
++					if (p->fnode->in_progress != SET) {
++						all_set = 0;
++						break;
++					}
++
++					p = p->next;
++				}
++
++				r = r->next;
++			}
++
++			if (all_set) {
++				if (fn_this->in_progress == FIRST) {
++					fn_this->in_progress = RESET;
++					rc_first = NULL;
++				}
++
++				if (rc_last != NULL && fn_this->in_progress == LAST) {
++					fn_this = fn_this->next;
++					continue;
++				}
++
++				if (rc_first != NULL) {
++					fn_this->in_progress = SET;
++					n_spawn++;
++					filenode_unlink(fn_this);
++				} else {
++					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
++						fn_this->in_progress = SET;
++						n_set++;
++						filenode_unlink(fn_this);
++					} else {
++						if (spawn(fn_this))
++							n_spawn++;
++					}
++				}
++			}
++
++			fn_this = fn_this->next;
++		}
++
++		DPRINTF((stderr, "S:%d, U:%d, R:%d, SP:%d, T:%d\n", \
++					n_set, n_unset, n_running, n_spawn, \
++					n_total));
++
++		if (n_running > 0) {
++			wait_child();
++			continue;
++		}
++
++		if (n_set == n_total) {
++			break;
++		} else {
++			if (n_spawn == 0 && n_running == 0 && rc_last != NULL)
++				exit(0);
++			if (n_spawn == 0) {
++				printf("we appear to be stuck. oh dear ...\n");
++				exit(1);
++			}
++		}
++	}
++
++	exit(0);
++}
++
++/*
++ * start a rc script for a filenode.
++ */
++static pid_t
++spawn(filenode *fn)
++{
++	struct kevent	event;
++	pid_t		p;
++	char		*args[] = {trampoline, fn->filename, script_arg, NULL};
++
++	DPRINTF((stderr, "spawn: %s\n", fn->filename));
++	p = fork();
++
++	if (p == -1) {
++		if (errno == EAGAIN)
++			return (0);
++		err(1, "fork");
++	}
++
++	/* parent */
++	if (p > 0) {
++		EV_SET(&event, p, EVFILT_PROC,
++				EV_ADD | EV_ENABLE | EV_ONESHOT,
++				NOTE_EXIT, 0, fn);
++
++		if (kevent(kq, &event, 1, NULL, 0, NULL) == -1) {
++			if (errno == EINTR)
++				return (0);
++			err(1, "kevent");
++		}
++
++		fn->in_progress = RUNNING;
++		return (p);
++	}
++
++	/* child */
++	execv(args[0], args);
++	exit(1);
++}
++
++/*
++ * Wait for at least one child process to exit. We block for a maximum
++ * of 20 seconds. After that, collect what is available.
++ */
++static int
++wait_child(void)
++{
++	struct kevent	event;
++	filenode	*f;
++	int		ret = 0;
++	struct timespec	ts;
++	f_provnode	*p,
++			*p_tmp;
++	provnode	*pnode;
++
++	ts.tv_sec = 20;
++	ts.tv_nsec = 0;
++
++	while (1) {
++		ret = kevent(kq, NULL, 0, &event, 1, &ts);
++
++		if (ret == 0)
++			break;
++
++		ts.tv_sec = 0;
++
++		if (ret == -1) {
++			if (errno == EINTR)
++				break;
++			err(1, "kevent");
++		}
++
++		/*
++		 * ignore waitpid errors and exit status; nothing we can do.
++		 * just collect childs.
++		 */
++		waitpid(event.ident, NULL, WNOHANG);
++
++		f = (filenode *) event.udata;
++
++		if (event.fflags & NOTE_EXIT) {
++			DPRINTF((stderr, "exit: %s (%d)\n", f->filename, event.ident));
++			f->in_progress = SET;
++			filenode_unlink(f);
++			f->req_list = NULL;
++
++			/*
++			 * for each provision of fnode -> p
++			 *	remove fnode from provision list for p in hash table
++			 */
++			p = f->prov_list;
++			while (p != NULL) {
++				p_tmp = p;
++				pnode = p->pnode;
++				if (pnode->next != NULL)
++					pnode->next->last = pnode->last;
++				if (pnode->last != NULL)
++					pnode->last->next = pnode->next;
++				free(pnode);
++				p = p->next;
++				free(p_tmp);
++			}
++			f->prov_list = NULL;
++		}
++	}
++
++	return (0);
++}
++
++/*
++ * remove filenode from list.
++ */
++static void
++filenode_unlink(filenode *f)
++{
++
++	if (f->next != NULL)
++		f->next->last = f->last;
++	if (f->last != NULL)
++		f->last->next = f->next;
++}
+Index: sbin/rcorder/rcorder.8
+===================================================================
+--- sbin/rcorder/rcorder.8	(revision 225227)
++++ sbin/rcorder/rcorder.8	(working copy)
+@@ -39,8 +39,13 @@
+ .Nd print a dependency ordering of interdependent files
+ .Sh SYNOPSIS
+ .Nm
++.Op Fl a Ar action
++.Op Fl f Ar first
+ .Op Fl k Ar keep
++.Op Fl l Ar last
++.Op Fl r
+ .Op Fl s Ar skip
++.Op Fl T Ar trampoline_script
+ .Ar
+ .Sh DESCRIPTION
+ The
+@@ -95,18 +100,43 @@
+ .Pp
+ The options are as follows:
+ .Bl -tag -width indent
++.It Fl a Ar action
++Argument passed to rc scripts by the trampoline script.
++.It Fl f Ar first
++Act as if the requirement
++.Ar first,
++and requirements leading up to it, have already been satisfied (see
++.Sx CAVEATS
++sections).
+ .It Fl k
+ Add the specified keyword to the
+ .Dq "keep list" .
+ If any
+ .Fl k
+ option is given, only those files containing the matching keyword are listed.
++.It Fl l Ar last
++Stop when the requirement
++.Ar last
++has been satisfied (see
++.Sx CAVEATS
++sections).
++.It Fl r
++Instead of printing the ordered list of rc scripts, execute them concurrently
++as
++.Nm
++sees fit.
+ .It Fl s
+ Add the specified keyword to the
+ .Dq "skip list" .
+ If any
+ .Fl s
+ option is given, files containing the matching keyword are not listed.
++.It Fl T Ar trampoline_script
++When running with the
++.Fl r
++flag, use the specified argument as the
++.Ar trampoline_script. It is called with the rc script to start as the first
++argument and the action (e.g. faststart) to take as the second argument.
+ .El
+ .Pp
+ An example block follows:
+@@ -187,3 +217,45 @@
+ not necessarily that it requires
+ .Xr named 8
+ to be started or enabled.
++.Sh CAVEATS
++When running with the
++.Fl r
++flag, the arguments passed to
++.Fl f
++or
++.Fl l
++must be one of the check-points (or "placeholders") mentioned in
++.Xr rc 8 .
++.Pp
++The ordering generated when running with or without the
++.Fl r
++flag is different. Without the
++.Fl r
++flag, and with the
++.Fl l
++flag,
++.Nm
++produces an ordering that only guarantees that the check-point will
++be satisfied. With the
++.Fl r
++flag,
++.Nm
++will guarantee that all and only the requirements leading up to the
++check-point will be satisfied.
++.Pp
++Likewise, with the
++.Fl f
++flag and the
++.Fl r
++flag set,
++.Nm
++will assume all and only the requirements before the check-point are
++satisfied. Without the
++.Fl r
++flag, the ordering will complement the ordering generated of the same
++.Nm
++run with the
++.Fl f
++replaced with
++.Fl l
++flag.

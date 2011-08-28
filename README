@@ -9,6 +9,9 @@ any rc scripts with -d):
 
 ./rcorder -d -T ./rc.trampoline -r -s nostart /etc/rc.d/* /usr/local/etc/rc.d/*
 
+A complete patch against current is in current.diff
+
+
 Install
 =======
 1. Build this rcorder
