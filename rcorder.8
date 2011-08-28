@@ -128,11 +128,12 @@ Add the specified keyword to the
 If any
 .Fl s
 option is given, files containing the matching keyword are not listed.
-.It Fl t Ar trampoline_script
+.It Fl T Ar trampoline_script
 When running with the
 .Fl r
 flag, use the specified argument as the
-.Ar trampoline_script.
+.Ar trampoline_script. It is called with the rc script to start as the first
+argument and the action (e.g. faststart) to take as the second argument.
 .El
 .Pp
 An example block follows:
