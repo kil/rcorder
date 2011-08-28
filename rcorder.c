@@ -804,9 +804,7 @@ do_file(filenode *fnode)
 	fnode->req_list = NULL;
 
 	/* mark fnode */
-	if (fnode->in_progress == FIRST)
-		rc_first = NULL;
-	else if (fnode->in_progress != LAST)
+	if (fnode->in_progress != FIRST && fnode->in_progress != LAST)
 		fnode->in_progress = SET;
 
 	/*
@@ -836,7 +834,9 @@ do_file(filenode *fnode)
 	if (was_set == 0 && skip_ok(fnode) && keep_ok(fnode)) {
 		if (rc_first == NULL)
 			printf("%s\n", fnode->filename);
-		if (fnode->in_progress == LAST)
+		if (fnode->in_progress == FIRST)
+			rc_first = NULL;
+		else if (fnode->in_progress == LAST)
 			exit(0);
 	}
 	

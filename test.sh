@@ -7,8 +7,7 @@ $ORIG_RCORDER $DIRS > test.orig 2> /dev/null
 
 for SEP in $SEPS; do
 	./rcorder $FLAGS -l $SEP $DIRS > test.a 2> /dev/null
-	./rcorder $FLAGS -f $SEP $DIRS 2> /dev/null \
-		| sed -n -e '2,$p' >> test.a
+	./rcorder $FLAGS -f $SEP $DIRS 2> /dev/null >> test.a
 
 	diff test.orig test.a
 	rm test.a
