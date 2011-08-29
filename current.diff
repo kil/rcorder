@@ -62,6 +62,19 @@ Index: etc/rc
  echo ''
  date
  exit 0
+Index: etc/Makefile
+===================================================================
+--- etc/Makefile	(revision 225227)
++++ etc/Makefile	(working copy)
+@@ -102,7 +102,7 @@
+ .endif
+ 
+ # -rwxr-xr-x root:wheel, for the new cron root:wheel
+-BIN2=	netstart pccard_ether rc.suspend rc.resume
++BIN2=	netstart pccard_ether rc.suspend rc.resume rc.trampoline
+ 
+ MTREE=	BSD.include.dist BSD.root.dist BSD.usr.dist BSD.var.dist
+ .if ${MK_SENDMAIL} != "no"
 Index: etc/rc.d/abi
 ===================================================================
 --- etc/rc.d/abi	(revision 225227)
@@ -705,3 +718,19 @@ Index: sbin/rcorder/rcorder.8
 +replaced with
 +.Fl l
 +flag.
+Index: share/man/man5/rc.conf.5
+===================================================================
+--- share/man/man5/rc.conf.5	(revision 225227)
++++ share/man/man5/rc.conf.5	(working copy)
+@@ -114,6 +114,11 @@
+ show
+ .Dq Starting foo:
+ when faststart is used (e.g., at boot time).
++.It Va rc_concurrent
++.Pq Vt bool
++If set to
++.Dq Li YES ,
++start rc scripts concurrently.
+ .It Va early_late_divider
+ .Pq Vt str
+ The name of the script that should be used as the
