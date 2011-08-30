@@ -84,6 +84,7 @@ int exit_code;
 int file_count;
 char **file_list;
 int kq;
+int childs = 0;
 char d_script_arg[] = "faststart";
 char d_trampoline[] = "/etc/rc.trampoline";
 char *trampoline = d_trampoline;
@@ -107,6 +108,7 @@ typedef struct provnode provnode;
 typedef struct filenode filenode;
 typedef struct f_provnode f_provnode;
 typedef struct f_reqnode f_reqnode;
+typedef struct f_neednode f_neednode;
 typedef struct strnodelist strnodelist;
 
 struct provnode {
@@ -126,6 +128,11 @@ struct f_reqnode {
 	f_reqnode	*next;
 };
 
+struct f_neednode {
+	filenode	*entry;
+	f_neednode	*next;
+};
+
 struct strnodelist {
 	filenode	*node;
 	strnodelist	*next;
@@ -139,6 +146,7 @@ struct filenode {
 	f_reqnode	*req_list;
 	f_provnode	*prov_list;
 	strnodelist	*keyword_list;
+	f_neednode	*need_list;
 };
 
 filenode fn_head_s, *fn_head;
@@ -172,7 +180,9 @@ static pid_t spawn(filenode *);
 static int wait_child(void);
 static void run_scripts(void);
 static void filenode_unlink(filenode *);
-
+static int can_run(filenode *);
+static void check_start(filenode *);
+static void generate_needs(void);
 
 int
 main(int argc, char *argv[])
@@ -299,6 +309,7 @@ filenode_new(char *filename)
 	temp->req_list = NULL;
 	temp->prov_list = NULL;
 	temp->keyword_list = NULL;
+	temp->need_list = NULL;
 
 	if (rc_first != NULL && strncmp(rc_first, basename(filename), strlen(rc_first)) == 0) {
 		temp->in_progress = FIRST;
@@ -880,161 +891,137 @@ generate_ordering(void)
 	}
 }
 
+/*
+ * Check if fn_this can be started by checking its requirements and status.
+ */
+static int
+can_run(filenode *fn_this) {
+	provnode	*p;
+	Hash_Entry	*entry;
+	f_reqnode	*r;
+	int		all_set;
+
+	if (fn_this->in_progress == RUNNING
+			|| fn_this->in_progress == LAST
+			|| fn_this->in_progress == SET)
+		return (0);
+
+	all_set = 1;
+
+	if (fn_this->req_list != NULL) {
+		r = fn_this->req_list;
+
+		/* check if all requirements are satisfied */
+		while (r != NULL) {
+			entry = r->entry;
+			p = Hash_GetValue(entry);
+
+			if (p != NULL && p->head == SET)
+				p = p->next;
+
+			if (p != NULL) {
+				all_set = 0;
+				break;
+			}
+
+			r = r->next;
+		}
+	}
+	return (all_set);
+}
 
 /*
- * Loop over filenode list multiple times and and, for each iteration, start
- * rc scripts which have all requirements satisfied. Continue until all
- * filenodes are SET (were run and exited).
+ * Generate the need_list for all nodes. This has to happen after all
+ * dependencies have been resolved.
  */
 static void
-run_scripts(void)
+generate_needs(void)
 {
 	provnode	*p;
 	Hash_Entry	*entry;
 	f_reqnode	*r;
 	filenode	*fn_this;
-	int		n_set,
-			n_unset,
-			n_running,
-			n_total,
-			n_spawn,
-			all_set;
+	f_neednode	*n;
 
-	while (1) {
-		n_total = 0;
-		/* skip list head */
-		fn_this = fn_head->next;
-		n_set = n_unset = n_running = 0, n_spawn = 0;
-
-		while (fn_this != NULL) {
-			n_total++;
-
-			switch (fn_this->in_progress) {
-			case SET:
-				n_set++;
-				break;
-			case RESET:
-				n_unset++;
-				break;
-			case RUNNING:
-				n_running++;
-				break;
-			}
-
-			if (fn_this->in_progress == SET || fn_this->in_progress == RUNNING) {
-				fn_this = fn_this->next;
-				continue;
-			}
-
-			if (fn_this->req_list == NULL) {
-				if (fn_this->in_progress == FIRST) {
-					fn_this->in_progress = RESET;
-					rc_first = NULL;
-				}
-
-				if (rc_last != NULL && fn_this->in_progress == LAST) {
-					fn_this = fn_this->next;
-					continue;
-				}
-
-				if (rc_first != NULL) {
-					fn_this->in_progress = SET;
-					n_spawn++;
-					filenode_unlink(fn_this);
-				} else {
-					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
-						fn_this->in_progress = SET;
-						n_set++;
-					filenode_unlink(fn_this);
-					} else {
-						if (spawn(fn_this))
-							n_spawn++;
-					}
-				}
-				fn_this = fn_this->next;
-				continue;
-			}
-
+	for(fn_this = fn_head->next; fn_this != NULL; fn_this = fn_this->next) {
+		if (fn_this->req_list != NULL) {
 			r = fn_this->req_list;
-			all_set = 1;
 
-			/* check if all requirements are satisfied */
-			while (all_set && r != NULL) {
+			while (r != NULL) {
 				entry = r->entry;
 				p = Hash_GetValue(entry);
 
-				if (p != NULL)
+				if (p != NULL && p->head == SET)
 					p = p->next;
 
 				while (p != NULL) {
-					if (p->fnode->in_progress != SET) {
-						all_set = 0;
-						break;
+					if(p->fnode == NULL) {
+						p = p->next;
+						continue;
 					}
 
+					n = emalloc(sizeof(f_neednode));
+					n->next = NULL;
+					n->entry = fn_this;
+					n->next = p->fnode->need_list;
+					p->fnode->need_list = n;
 					p = p->next;
 				}
-
 				r = r->next;
-			}
-
-			if (all_set) {
-				if (fn_this->in_progress == FIRST) {
-					fn_this->in_progress = RESET;
-					rc_first = NULL;
-				}
-
-				if (rc_last != NULL && fn_this->in_progress == LAST) {
-					fn_this = fn_this->next;
-					continue;
-				}
-
-				if (rc_first != NULL) {
-					fn_this->in_progress = SET;
-					n_spawn++;
-					filenode_unlink(fn_this);
-				} else {
-					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
-						fn_this->in_progress = SET;
-						n_set++;
-						filenode_unlink(fn_this);
-					} else {
-						if (spawn(fn_this))
-							n_spawn++;
-					}
-				}
-			}
-
-			fn_this = fn_this->next;
-		}
-
-		DPRINTF((stderr, "S:%d, U:%d, R:%d, SP:%d, T:%d\n", \
-					n_set, n_unset, n_running, n_spawn, \
-					n_total));
-
-		if (n_running > 0) {
-			wait_child();
-			continue;
-		}
-
-		if (n_set == n_total) {
-			break;
-		} else {
-			if (n_spawn == 0 && n_running == 0 && rc_last != NULL)
-				exit(0);
-			if (n_spawn == 0) {
-				printf("we appear to be stuck. oh dear ...\n");
-				exit(1);
 			}
 		}
 	}
+}
 
+/*
+ * fill the need lists and start everything that has no requirements.
+ */
+static void
+run_scripts(void)
+{
+	filenode	*fn_this,
+			*t = NULL;
+
+	generate_needs();
+
+	DPRINTF((stderr, "init...\n"));
+	fn_this = fn_head->next;
+	while (fn_this != NULL) {
+		if (fn_this->in_progress == FIRST) {
+			t = fn_this;
+		} else {
+			if (can_run(fn_this))
+				spawn(fn_this);
+		}
+		fn_this = fn_this->next;
+	}
+
+	/*
+	 * If rc_first was set, we have to skip the dependecies before
+	 * rc_first. We can't unset rc_first in the loop above because
+	 * that would allow scripts, that should not started, to run.
+	 */
+	if (t) {
+		rc_first = NULL;
+		t->in_progress = RESET;
+		spawn(t);
+		fn_this = fn_head->next;
+		while (fn_this != NULL) {
+			if (can_run(fn_this))
+				spawn(fn_this);
+			fn_this = fn_this->next;
+		}
+	}
+
+	DPRINTF((stderr, "wait ...\n"));
+	while (childs > 0)
+		wait_child();
 	exit(0);
 }
 
 
 /*
- * start a rc script for a filenode.
+ * Start a rc script for a filenode.
  */
 static pid_t
 spawn(filenode *fn)
@@ -1043,7 +1030,29 @@ spawn(filenode *fn)
 	pid_t		p;
 	char		*args[] = {trampoline, fn->filename, script_arg, NULL};
 
+	if (fn->in_progress == SET || fn->in_progress == RUNNING)
+		return (0);
+
+	if (fn->in_progress == FIRST)
+		return (0);
+
+	if (fn->in_progress == LAST)
+		return (0);
+
+	if (rc_first != NULL) {
+		filenode_unlink(fn);
+		check_start(fn);
+		return (1);
+	}
+
+	if (!(skip_ok(fn) && keep_ok(fn))) {
+		filenode_unlink(fn);
+		check_start(fn);
+		return (1);
+	}
+
 	DPRINTF((stderr, "spawn: %s\n", fn->filename));
+	childs++;
 	p = fork();
 
 	if (p == -1) {
@@ -1082,11 +1091,8 @@ wait_child(void)
 {
 	struct kevent	event;
 	filenode	*f;
-	int		ret = 0;
+	int		ret;
 	struct timespec	ts;
-	f_provnode	*p,
-			*p_tmp;
-	provnode	*pnode;
 
 	ts.tv_sec = 20;
 	ts.tv_nsec = 0;
@@ -1110,32 +1116,14 @@ wait_child(void)
 		 * just collect childs.
 		 */
 		waitpid(event.ident, NULL, WNOHANG);
+		childs--;
 
 		f = (filenode *) event.udata;
 
 		if (event.fflags & NOTE_EXIT) {
 			DPRINTF((stderr, "exit: %s (%d)\n", f->filename, event.ident));
-			f->in_progress = SET;
 			filenode_unlink(f);
-			f->req_list = NULL;
-
-			/*
-			 * for each provision of fnode -> p
-			 *	remove fnode from provision list for p in hash table
-			 */
-			p = f->prov_list;
-			while (p != NULL) {
-				p_tmp = p;
-				pnode = p->pnode;
-				if (pnode->next != NULL)
-					pnode->next->last = pnode->last;
-				if (pnode->last != NULL)
-					pnode->last->next = pnode->next;
-				free(pnode);
-				p = p->next;
-				free(p_tmp);
-			}
-			f->prov_list = NULL;
+			check_start(f);
 		}
 	}
 
@@ -1143,14 +1131,58 @@ wait_child(void)
 }
 
 /*
- * remove filenode from list.
+ * For f check which nodes that require it can be started. and start them.
+ */
+static void
+check_start(filenode *f)
+{
+	filenode *fn;
+	f_neednode *n;
+
+	if (f->need_list == NULL)
+		return;
+
+	n = f->need_list;
+	while (n != NULL) {
+		fn = n->entry;
+		if(can_run(fn))
+			spawn(fn);
+		n = n->next;
+	}
+}
+
+/*
+ * Remove filenode from list.
  */
 static void
 filenode_unlink(filenode *f)
 {
+	f_provnode	*p,
+			*p_tmp;
+	provnode	*pnode;
 
+	f->in_progress = SET;
 	if (f->next != NULL)
 		f->next->last = f->last;
 	if (f->last != NULL)
 		f->last->next = f->next;
+	f->req_list = NULL;
+
+	/*
+	 * for each provision of fnode -> p
+	 *	remove fnode from provision list for p in hash table
+	 */
+	p = f->prov_list;
+	while (p != NULL) {
+		p_tmp = p;
+		pnode = p->pnode;
+		if (pnode->next != NULL)
+			pnode->next->last = pnode->last;
+		if (pnode->last != NULL)
+			pnode->last->next = pnode->next;
+		free(pnode);
+		p = p->next;
+		free(p_tmp);
+	}
+	f->prov_list = NULL;
 }

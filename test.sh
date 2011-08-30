@@ -11,23 +11,32 @@ for SEP in $SEPS; do
 
 	diff test.orig test.a
 	rm test.a
-
+	echo running with seperator $SEP
 
 	./rcorder -d -l $SEP -T ./rc.trampoline -r $FLAGS $DIRS 2> /dev/null \
 		| grep _RCORDER_RUN_DEBUG | awk '{print $2}' - > test.b
 	./rcorder -d -f $SEP -T ./rc.trampoline -r $FLAGS $DIRS 2> /dev/null \
 		| grep _RCORDER_RUN_DEBUG | awk '{print $2}' - > test.c
 
+	DUPS=0
 	for x in `cat test.c`; do
 		A=$(grep "$x\$" test.b)
 		if [ -n "$A" ]; then
 			echo DUP $A
-			exit 1
+			DUPS=1
 		fi
 	done
+
+	if [ "$DUPS" = "1" ]; then
+		exit 1
+	fi
 
 	sort test.b test.c > test.d
 	sort test.orig > test.e
 	diff test.d test.e
+	if [ "$?" = "1" ]; then
+		echo scripts missing
+		exit 1
+	fi
 done
 rm test.b test.c test.d test.e test.orig

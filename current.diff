@@ -172,11 +172,12 @@ Index: sbin/rcorder/rcorder.c
  
  #include "ealloc.h"
  #include "sprite.h"
-@@ -76,6 +83,13 @@
+@@ -76,6 +83,14 @@
  int exit_code;
  int file_count;
  char **file_list;
 +int kq;
++int childs = 0;
 +char d_script_arg[] = "faststart";
 +char d_trampoline[] = "/etc/rc.trampoline";
 +char *trampoline = d_trampoline;
@@ -186,7 +187,7 @@ Index: sbin/rcorder/rcorder.c
  
  typedef int bool;
  #define TRUE 1
-@@ -83,6 +97,9 @@
+@@ -83,6 +98,9 @@
  typedef bool flag;
  #define SET TRUE
  #define RESET FALSE
@@ -196,7 +197,35 @@ Index: sbin/rcorder/rcorder.c
  
  Hash_Table provide_hash_s, *provide_hash;
  
-@@ -151,17 +168,28 @@
+@@ -90,6 +108,7 @@
+ typedef struct filenode filenode;
+ typedef struct f_provnode f_provnode;
+ typedef struct f_reqnode f_reqnode;
++typedef struct f_neednode f_neednode;
+ typedef struct strnodelist strnodelist;
+ 
+ struct provnode {
+@@ -109,6 +128,11 @@
+ 	f_reqnode	*next;
+ };
+ 
++struct f_neednode {
++	filenode	*entry;
++	f_neednode	*next;
++};
++
+ struct strnodelist {
+ 	filenode	*node;
+ 	strnodelist	*next;
+@@ -122,6 +146,7 @@
+ 	f_reqnode	*req_list;
+ 	f_provnode	*prov_list;
+ 	strnodelist	*keyword_list;
++	f_neednode	*need_list;
+ };
+ 
+ filenode fn_head_s, *fn_head;
+@@ -151,17 +176,31 @@
  void initialize(void);
  void generate_ordering(void);
  int main(int, char *[]);
@@ -204,6 +233,9 @@ Index: sbin/rcorder/rcorder.c
 +static int wait_child(void);
 +static void run_scripts(void);
 +static void filenode_unlink(filenode *);
++static int can_run(filenode *);
++static void check_start(filenode *);
++static void generate_needs(void);
  
  int
  main(int argc, char *argv[])
@@ -226,7 +258,7 @@ Index: sbin/rcorder/rcorder.c
  #else
  			warnx("debugging not compiled in, -d ignored");
  #endif
-@@ -169,9 +197,21 @@
+@@ -169,9 +208,21 @@
  		case 'k':
  			strnode_add(&keep_list, optarg, 0);
  			break;
@@ -248,7 +280,7 @@ Index: sbin/rcorder/rcorder.c
  		default:
  			/* XXX should crunch it? */
  			break;
-@@ -187,9 +227,27 @@
+@@ -187,9 +238,27 @@
  	DPRINTF((stderr, "initialize\n"));
  	crunch_all_files();
  	DPRINTF((stderr, "crunch_all_files\n"));
@@ -278,11 +310,12 @@ Index: sbin/rcorder/rcorder.c
  	exit(exit_code);
  }
  
-@@ -240,7 +298,15 @@
+@@ -240,7 +309,16 @@
  	temp->req_list = NULL;
  	temp->prov_list = NULL;
  	temp->keyword_list = NULL;
 -	temp->in_progress = RESET;
++	temp->need_list = NULL;
 +
 +	if (rc_first != NULL && strncmp(rc_first, basename(filename), strlen(rc_first)) == 0) {
 +		temp->in_progress = FIRST;
@@ -295,7 +328,7 @@ Index: sbin/rcorder/rcorder.c
  	/*
  	 * link the filenode into the list of filenodes.
  	 * note that the double linking means we can delete a
-@@ -720,9 +786,6 @@
+@@ -720,9 +798,6 @@
  	} else
  		was_set = 0;
  
@@ -305,7 +338,7 @@ Index: sbin/rcorder/rcorder.c
  	/*
  	 * for each requirement of fnode -> r
  	 *	satisfy_req(r, filename)
-@@ -739,6 +802,10 @@
+@@ -739,6 +814,10 @@
  	}
  	fnode->req_list = NULL;
  
@@ -316,7 +349,7 @@ Index: sbin/rcorder/rcorder.c
  	/*
  	 * for each provision of fnode -> p
  	 *	remove fnode from provision list for p in hash table
-@@ -763,8 +830,14 @@
+@@ -763,8 +842,14 @@
  	DPRINTF((stderr, "next do: "));
  
  	/* if we were already in progress, don't print again */
@@ -333,164 +366,142 @@ Index: sbin/rcorder/rcorder.c
  	
  	if (fnode->next != NULL) {
  		fnode->next->last = fnode->last;
-@@ -805,3 +878,276 @@
+@@ -805,3 +890,299 @@
  		do_file(fn_head->next);
  	}
  }
 +
 +/*
-+ * Loop over filenode list multiple times and and, for each iteration, start
-+ * rc scripts which have all requirements satisfied. Continue until all
-+ * filenodes are SET (were run and exited).
++ * Check if fn_this can be started by checking its requirements and status.
++ */
++static int
++can_run(filenode *fn_this) {
++	provnode	*p;
++	Hash_Entry	*entry;
++	f_reqnode	*r;
++	int		all_set;
++
++	if (fn_this->in_progress == RUNNING
++			|| fn_this->in_progress == LAST
++			|| fn_this->in_progress == SET)
++		return (0);
++
++	all_set = 1;
++
++	if (fn_this->req_list != NULL) {
++		r = fn_this->req_list;
++
++		/* check if all requirements are satisfied */
++		while (r != NULL) {
++			entry = r->entry;
++			p = Hash_GetValue(entry);
++
++			if (p != NULL && p->head == SET)
++				p = p->next;
++
++			if (p != NULL) {
++				all_set = 0;
++				break;
++			}
++
++			r = r->next;
++		}
++	}
++	return (all_set);
++}
++
++/*
++ * Generate the need_list for all nodes. This has to happen after all
++ * dependencies have been resolved.
 + */
 +static void
-+run_scripts(void)
++generate_needs(void)
 +{
 +	provnode	*p;
 +	Hash_Entry	*entry;
 +	f_reqnode	*r;
 +	filenode	*fn_this;
-+	int		n_set,
-+			n_unset,
-+			n_running,
-+			n_total,
-+			n_spawn,
-+			all_set;
++	f_neednode	*n;
 +
-+	while (1) {
-+		n_total = 0;
-+		/* skip list head */
-+		fn_this = fn_head->next;
-+		n_set = n_unset = n_running = 0, n_spawn = 0;
-+
-+		while (fn_this != NULL) {
-+			n_total++;
-+
-+			switch (fn_this->in_progress) {
-+			case SET:
-+				n_set++;
-+				break;
-+			case RESET:
-+				n_unset++;
-+				break;
-+			case RUNNING:
-+				n_running++;
-+				break;
-+			}
-+
-+			if (fn_this->in_progress == SET || fn_this->in_progress == RUNNING) {
-+				fn_this = fn_this->next;
-+				continue;
-+			}
-+
-+			if (fn_this->req_list == NULL) {
-+				if (fn_this->in_progress == FIRST) {
-+					fn_this->in_progress = RESET;
-+					rc_first = NULL;
-+				}
-+
-+				if (rc_last != NULL && fn_this->in_progress == LAST) {
-+					fn_this = fn_this->next;
-+					continue;
-+				}
-+
-+				if (rc_first != NULL) {
-+					fn_this->in_progress = SET;
-+					n_spawn++;
-+					filenode_unlink(fn_this);
-+				} else {
-+					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
-+						fn_this->in_progress = SET;
-+						n_set++;
-+					filenode_unlink(fn_this);
-+					} else {
-+						if (spawn(fn_this))
-+							n_spawn++;
-+					}
-+				}
-+				fn_this = fn_this->next;
-+				continue;
-+			}
-+
++	for(fn_this = fn_head->next; fn_this != NULL; fn_this = fn_this->next) {
++		if (fn_this->req_list != NULL) {
 +			r = fn_this->req_list;
-+			all_set = 1;
 +
-+			/* check if all requirements are satisfied */
-+			while (all_set && r != NULL) {
++			while (r != NULL) {
 +				entry = r->entry;
 +				p = Hash_GetValue(entry);
 +
-+				if (p != NULL)
++				if (p != NULL && p->head == SET)
 +					p = p->next;
 +
 +				while (p != NULL) {
-+					if (p->fnode->in_progress != SET) {
-+						all_set = 0;
-+						break;
++					if(p->fnode == NULL) {
++						p = p->next;
++						continue;
 +					}
 +
++					n = emalloc(sizeof(f_neednode));
++					n->next = NULL;
++					n->entry = fn_this;
++					n->next = p->fnode->need_list;
++					p->fnode->need_list = n;
 +					p = p->next;
 +				}
-+
 +				r = r->next;
-+			}
-+
-+			if (all_set) {
-+				if (fn_this->in_progress == FIRST) {
-+					fn_this->in_progress = RESET;
-+					rc_first = NULL;
-+				}
-+
-+				if (rc_last != NULL && fn_this->in_progress == LAST) {
-+					fn_this = fn_this->next;
-+					continue;
-+				}
-+
-+				if (rc_first != NULL) {
-+					fn_this->in_progress = SET;
-+					n_spawn++;
-+					filenode_unlink(fn_this);
-+				} else {
-+					if (!(skip_ok(fn_this) && keep_ok(fn_this))) {
-+						fn_this->in_progress = SET;
-+						n_set++;
-+						filenode_unlink(fn_this);
-+					} else {
-+						if (spawn(fn_this))
-+							n_spawn++;
-+					}
-+				}
-+			}
-+
-+			fn_this = fn_this->next;
-+		}
-+
-+		DPRINTF((stderr, "S:%d, U:%d, R:%d, SP:%d, T:%d\n", \
-+					n_set, n_unset, n_running, n_spawn, \
-+					n_total));
-+
-+		if (n_running > 0) {
-+			wait_child();
-+			continue;
-+		}
-+
-+		if (n_set == n_total) {
-+			break;
-+		} else {
-+			if (n_spawn == 0 && n_running == 0 && rc_last != NULL)
-+				exit(0);
-+			if (n_spawn == 0) {
-+				printf("we appear to be stuck. oh dear ...\n");
-+				exit(1);
 +			}
 +		}
 +	}
-+
-+	exit(0);
 +}
 +
 +/*
-+ * start a rc script for a filenode.
++ * fill the need lists and start everything that has no requirements.
++ */
++static void
++run_scripts(void)
++{
++	filenode	*fn_this,
++			*t = NULL;
++
++	generate_needs();
++
++	DPRINTF((stderr, "init...\n"));
++	fn_this = fn_head->next;
++	while (fn_this != NULL) {
++		if (fn_this->in_progress == FIRST) {
++			t = fn_this;
++		} else {
++			if (can_run(fn_this))
++				spawn(fn_this);
++		}
++		fn_this = fn_this->next;
++	}
++
++	/*
++	 * If rc_first was set, we have to skip the dependecies before
++	 * rc_first. We can't unset rc_first in the loop above because
++	 * that would allow scripts, that should not started, to run.
++	 */
++	if (t) {
++		rc_first = NULL;
++		t->in_progress = RESET;
++		spawn(t);
++		fn_this = fn_head->next;
++		while (fn_this != NULL) {
++			if (can_run(fn_this))
++				spawn(fn_this);
++			fn_this = fn_this->next;
++		}
++	}
++
++	DPRINTF((stderr, "wait ...\n"));
++	while (childs > 0)
++		wait_child();
++	exit(0);
++}
++
++
++/*
++ * Start a rc script for a filenode.
 + */
 +static pid_t
 +spawn(filenode *fn)
@@ -499,7 +510,29 @@ Index: sbin/rcorder/rcorder.c
 +	pid_t		p;
 +	char		*args[] = {trampoline, fn->filename, script_arg, NULL};
 +
++	if (fn->in_progress == SET || fn->in_progress == RUNNING)
++		return (0);
++
++	if (fn->in_progress == FIRST)
++		return (0);
++
++	if (fn->in_progress == LAST)
++		return (0);
++
++	if (rc_first != NULL) {
++		filenode_unlink(fn);
++		check_start(fn);
++		return (1);
++	}
++
++	if (!(skip_ok(fn) && keep_ok(fn))) {
++		filenode_unlink(fn);
++		check_start(fn);
++		return (1);
++	}
++
 +	DPRINTF((stderr, "spawn: %s\n", fn->filename));
++	childs++;
 +	p = fork();
 +
 +	if (p == -1) {
@@ -538,11 +571,8 @@ Index: sbin/rcorder/rcorder.c
 +{
 +	struct kevent	event;
 +	filenode	*f;
-+	int		ret = 0;
++	int		ret;
 +	struct timespec	ts;
-+	f_provnode	*p,
-+			*p_tmp;
-+	provnode	*pnode;
 +
 +	ts.tv_sec = 20;
 +	ts.tv_nsec = 0;
@@ -566,32 +596,14 @@ Index: sbin/rcorder/rcorder.c
 +		 * just collect childs.
 +		 */
 +		waitpid(event.ident, NULL, WNOHANG);
++		childs--;
 +
 +		f = (filenode *) event.udata;
 +
 +		if (event.fflags & NOTE_EXIT) {
 +			DPRINTF((stderr, "exit: %s (%d)\n", f->filename, event.ident));
-+			f->in_progress = SET;
 +			filenode_unlink(f);
-+			f->req_list = NULL;
-+
-+			/*
-+			 * for each provision of fnode -> p
-+			 *	remove fnode from provision list for p in hash table
-+			 */
-+			p = f->prov_list;
-+			while (p != NULL) {
-+				p_tmp = p;
-+				pnode = p->pnode;
-+				if (pnode->next != NULL)
-+					pnode->next->last = pnode->last;
-+				if (pnode->last != NULL)
-+					pnode->last->next = pnode->next;
-+				free(pnode);
-+				p = p->next;
-+				free(p_tmp);
-+			}
-+			f->prov_list = NULL;
++			check_start(f);
 +		}
 +	}
 +
@@ -599,16 +611,60 @@ Index: sbin/rcorder/rcorder.c
 +}
 +
 +/*
-+ * remove filenode from list.
++ * For f check which nodes that require it can be started. and start them.
++ */
++static void
++check_start(filenode *f)
++{
++	filenode *fn;
++	f_neednode *n;
++
++	if (f->need_list == NULL)
++		return;
++
++	n = f->need_list;
++	while (n != NULL) {
++		fn = n->entry;
++		if(can_run(fn))
++			spawn(fn);
++		n = n->next;
++	}
++}
++
++/*
++ * Remove filenode from list.
 + */
 +static void
 +filenode_unlink(filenode *f)
 +{
++	f_provnode	*p,
++			*p_tmp;
++	provnode	*pnode;
 +
++	f->in_progress = SET;
 +	if (f->next != NULL)
 +		f->next->last = f->last;
 +	if (f->last != NULL)
 +		f->last->next = f->next;
++	f->req_list = NULL;
++
++	/*
++	 * for each provision of fnode -> p
++	 *	remove fnode from provision list for p in hash table
++	 */
++	p = f->prov_list;
++	while (p != NULL) {
++		p_tmp = p;
++		pnode = p->pnode;
++		if (pnode->next != NULL)
++			pnode->next->last = pnode->last;
++		if (pnode->last != NULL)
++			pnode->last->next = pnode->next;
++		free(pnode);
++		p = p->next;
++		free(p_tmp);
++	}
++	f->prov_list = NULL;
 +}
 Index: sbin/rcorder/rcorder.8
 ===================================================================
@@ -628,7 +684,7 @@ Index: sbin/rcorder/rcorder.8
  .Ar
  .Sh DESCRIPTION
  The
-@@ -95,18 +100,43 @@
+@@ -95,18 +100,44 @@
  .Pp
  The options are as follows:
  .Bl -tag -width indent
@@ -667,15 +723,16 @@ Index: sbin/rcorder/rcorder.8
 +When running with the
 +.Fl r
 +flag, use the specified argument as the
-+.Ar trampoline_script. It is called with the rc script to start as the first
-+argument and the action (e.g. faststart) to take as the second argument.
++.Ar trampoline_script.
++It is called with the rc script to start as the first argument and the action
++(e.g. faststart) to take as the second argument.
  .El
  .Pp
  An example block follows:
-@@ -187,3 +217,45 @@
- not necessarily that it requires
- .Xr named 8
- to be started or enabled.
+@@ -155,6 +186,48 @@
+ A set of files has a circular dependency which was detected while
+ processing the stated file.
+ .El
 +.Sh CAVEATS
 +When running with the
 +.Fl r
@@ -718,6 +775,9 @@ Index: sbin/rcorder/rcorder.8
 +replaced with
 +.Fl l
 +flag.
+ .Sh SEE ALSO
+ .Xr rc 8
+ .Sh HISTORY
 Index: share/man/man5/rc.conf.5
 ===================================================================
 --- share/man/man5/rc.conf.5	(revision 225227)
